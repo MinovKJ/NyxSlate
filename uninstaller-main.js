@@ -130,11 +130,25 @@ ipcMain.handle('start-uninstall', async () => {
     const regScript = `
       Remove-Item -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NyxSlate' -Recurse -Force -ErrorAction SilentlyContinue
       Remove-Item -Path 'HKCU:\\Software\\Classes\\NyxSlate.PDF' -Recurse -Force -ErrorAction SilentlyContinue
+      Remove-Item -Path 'HKCU:\\Software\\Classes\\Applications\\electron.exe' -Recurse -Force -ErrorAction SilentlyContinue
+      Remove-Item -Path 'HKCU:\\Software\\NyxSlate' -Recurse -Force -ErrorAction SilentlyContinue
+      Remove-ItemProperty -Path 'HKCU:\\Software\\RegisteredApplications' -Name 'NyxSlate' -ErrorAction SilentlyContinue
+      Remove-ItemProperty -Path 'HKCU:\\Software\\Classes\\.pdf\\OpenWithProgids' -Name 'NyxSlate.PDF' -ErrorAction SilentlyContinue
+      Remove-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\OpenWithProgids' -Name 'NyxSlate.PDF' -ErrorAction SilentlyContinue
+      Remove-Item -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\NyxSlate.exe' -Recurse -Force -ErrorAction SilentlyContinue
       try {
         $pdf = (Get-ItemProperty -Path 'HKCU:\\Software\\Classes\\.pdf' -ErrorAction SilentlyContinue).'(default)'
         if ($pdf -eq 'NyxSlate.PDF') {
           Remove-Item -Path 'HKCU:\\Software\\Classes\\.pdf' -Recurse -Force -ErrorAction SilentlyContinue
         }
+      } catch {}
+      try {
+        $sig = @'
+        [DllImport("shell32.dll")]
+        public static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
+'@
+        $t = Add-Type -MemberDefinition $sig -Name 'Win32SHUn' -Namespace 'Win32' -PassThru
+        $t::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
       } catch {}
     `;
 

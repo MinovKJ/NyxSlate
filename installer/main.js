@@ -173,27 +173,64 @@ function registerUninstaller(installPath) {
 
 function setPdfAssociation(installPath) {
   const electronExe = path.join(installPath, 'node_modules', 'electron', 'dist', 'electron.exe');
-  const appPath = installPath;
   const iconPath = path.join(installPath, 'icon.ico');
+  const openCommand = `"${electronExe}" "${installPath}" "%1"`;
 
-  const ps = `
-    $pdf = 'HKCU:\\Software\\Classes\\.pdf'
-    $app = 'HKCU:\\Software\\Classes\\NyxSlate.PDF'
-    if (!(Test-Path $pdf)) { New-Item -Path $pdf -Force | Out-Null }
-    if (!(Test-Path $app)) { New-Item -Path $app -Force | Out-Null }
-    Set-ItemProperty -Path $pdf -Name '(default)' -Value 'NyxSlate.PDF'
-    Set-ItemProperty -Path $app -Name '(default)' -Value 'NyxSlate PDF Document'
-    $iconKey = "$app\\DefaultIcon"
-    if (!(Test-Path $iconKey)) { New-Item -Path $iconKey -Force | Out-Null }
-    Set-ItemProperty -Path $iconKey -Name '(default)' -Value '${iconPath.replace(/'/g, "''")}'
-    [Microsoft.Win32.Registry]::SetValue('HKEY_CURRENT_USER\\Software\\Classes\\NyxSlate.PDF\\shell\\open\\command', '', [char]34 + '${electronExe.replace(/'/g, "''")}' + [char]34 + ' ' + [char]34 + '${appPath.replace(/'/g, "''")}' + [char]34 + ' ' + [char]34 + '%1' + [char]34)
-  `;
+  function regAdd(key, valueName, data, type = 'REG_SZ') {
+    try {
+      const vFlag = valueName === '' ? '/ve' : `/v "${valueName}"`;
+      const tFlag = `/t ${type}`;
+      const dFlag = data === '' ? '/d ""' : `/d "${data.replace(/"/g, '\\"')}"`;
+      execSync(`reg.exe add "${key}" ${vFlag} ${tFlag} ${dFlag} /f`, { windowsHide: true, stdio: 'ignore' });
+    } catch (e) { /* ignore */ }
+  }
 
   try {
-    execSync(`powershell -NoProfile -WindowStyle Hidden -Command "${ps.replace(/\r?\n/g, '; ').replace(/"/g, '\\"')}"`, {
-      windowsHide: true,
-      stdio: 'ignore'
-    });
+    // 1. Classes .pdf
+    regAdd('HKCU\\Software\\Classes\\.pdf', '', 'NyxSlate.PDF');
+    regAdd('HKCU\\Software\\Classes\\.pdf\\OpenWithProgids', 'NyxSlate.PDF', '');
+    regAdd('HKCU\\Software\\Classes\\.pdf\\OpenWithList\\electron.exe', '', '');
+
+    // 2. Classes NyxSlate.PDF
+    regAdd('HKCU\\Software\\Classes\\NyxSlate.PDF', '', 'NyxSlate PDF Document');
+    regAdd('HKCU\\Software\\Classes\\NyxSlate.PDF', 'FriendlyTypeName', 'NyxSlate PDF Document');
+    regAdd('HKCU\\Software\\Classes\\NyxSlate.PDF\\DefaultIcon', '', iconPath);
+    regAdd('HKCU\\Software\\Classes\\NyxSlate.PDF\\shell\\open', 'FriendlyAppName', 'NyxSlate');
+    regAdd('HKCU\\Software\\Classes\\NyxSlate.PDF\\shell\\open\\command', '', openCommand);
+
+    // 3. Applications\\electron.exe (Ensures Windows shows "NyxSlate" instead of "Electron")
+    regAdd('HKCU\\Software\\Classes\\Applications\\electron.exe', 'FriendlyAppName', 'NyxSlate');
+    regAdd('HKCU\\Software\\Classes\\Applications\\electron.exe', 'ApplicationCompany', 'NyxSlate');
+    regAdd('HKCU\\Software\\Classes\\Applications\\electron.exe\\DefaultIcon', '', iconPath);
+    regAdd('HKCU\\Software\\Classes\\Applications\\electron.exe\\SupportedTypes', '.pdf', '');
+    regAdd('HKCU\\Software\\Classes\\Applications\\electron.exe\\shell\\open', 'FriendlyAppName', 'NyxSlate');
+    regAdd('HKCU\\Software\\Classes\\Applications\\electron.exe\\shell\\open\\command', '', openCommand);
+
+    // 4. RegisteredApplications & Capabilities
+    regAdd('HKCU\\Software\\RegisteredApplications', 'NyxSlate', 'Software\\NyxSlate\\Capabilities');
+    regAdd('HKCU\\Software\\NyxSlate\\Capabilities', 'ApplicationName', 'NyxSlate');
+    regAdd('HKCU\\Software\\NyxSlate\\Capabilities', 'ApplicationDescription', 'NyxSlate PDF Reader');
+    regAdd('HKCU\\Software\\NyxSlate\\Capabilities\\FileAssociations', '.pdf', 'NyxSlate.PDF');
+
+    // 5. Explorer FileExts
+    regAdd('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\OpenWithProgids', 'NyxSlate.PDF', '', 'REG_NONE');
+    regAdd('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\OpenWithList', 'a', 'electron.exe');
+    regAdd('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\OpenWithList', 'MRUList', 'a');
+
+    // 6. App Paths
+    regAdd('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\NyxSlate.exe', '', electronExe);
+    regAdd('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\NyxSlate.exe', 'Path', installPath);
+
+    // 7. Notify Windows Shell (SHChangeNotify)
+    const ps = `
+      $signature = @'
+      [DllImport("shell32.dll")]
+      public static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
+'@
+      $type = Add-Type -MemberDefinition $signature -Name 'Win32SHAssoc' -Namespace 'Win32' -PassThru
+      $type::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
+    `;
+    execSync(`powershell -NoProfile -Command "${ps.replace(/\r?\n/g, ' ')}"`, { windowsHide: true, stdio: 'ignore' });
   } catch (e) { /* continue */ }
 }
 
