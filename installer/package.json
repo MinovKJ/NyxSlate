@@ -1,0 +1,54 @@
+{
+  "name": "nyxslate-installer",
+  "version": "1.0.0",
+  "description": "NyxSlate Installation Manager",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win",
+    "payload": "powershell -ExecutionPolicy Bypass -File build-payload.ps1"
+  },
+  "author": "NyxSlate Team",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.nyxslate.installer",
+    "productName": "NyxSlate",
+    "artifactName": "NyxSlate-Setup-${version}.${ext}",
+    "win": {
+      "target": {
+        "target": "nsis",
+        "arch": ["x64"]
+      },
+      "icon": "../icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "installerIcon": "../icon.ico",
+      "uninstallerIcon": "../icon.ico",
+      "installerHeaderIcon": "../icon.ico",
+      "deleteAppDataOnUninstall": true,
+      "shortcutName": "NyxSlate Setup"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "payload",
+        "to": "payload",
+        "filter": ["**/*"]
+      }
+    ],
+    "compression": "maximum",
+    "removePackageScripts": true
+  }
+}

@@ -2,6 +2,11 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
+// Suppress EPIPE errors — prevents crash when launched from installer
+// or any context where stdout/stderr pipe is closed early.
+process.stdout?.on?.('error', (err) => { if (err.code !== 'EPIPE') throw err; });
+process.stderr?.on?.('error', (err) => { if (err.code !== 'EPIPE') throw err; });
+
 let mainWindow = null;
 
 function createWindow() {
