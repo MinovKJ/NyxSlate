@@ -1,0 +1,40 @@
+{
+  "name": "nyxslate",
+  "version": "1.0.0",
+  "description": "NyxSlate — Premium Dark-Themed PDF Reader for Windows",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win"
+  },
+  "keywords": [
+    "pdf",
+    "reader",
+    "nyxslate",
+    "desktop",
+    "windows",
+    "webgl"
+  ],
+  "author": "NyxSlate Team",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.4.11"
+  },
+  "build": {
+    "appId": "com.nyxslate.pdfreader",
+    "productName": "NyxSlate",
+    "win": {
+      "target": "nsis"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "package.json"
+    ]
+  },
+  "dependencies": {
+    "pdf-lib": "^1.17.1"
+  }
+}
