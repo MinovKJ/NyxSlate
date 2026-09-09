@@ -346,6 +346,7 @@ ipcMain.handle('start-install', async (_event, options) => {
   installDir = installPath;
   const payloadDir = getPayloadDir();
 
+  try {
     // Close any previous app instance running strictly from the target install path
     if (fs.existsSync(installPath)) {
       try {
