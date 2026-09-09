@@ -4540,6 +4540,47 @@ const scnt     = document.getElementById('scnt');
 const sbar     = document.getElementById('sbar');
 const loverlay = document.getElementById('loverlay');
 
+// ─── Adaptive Power & Refresh Rate Engine (60 FPS on Battery, 144 FPS on AC) ──
+const AdaptiveFPS = {
+  onBattery: false,
+  targetFps: 144,
+  minFrameDelta: 1000 / 144,
+
+  init() {
+    if (window.electronAPI && window.electronAPI.getPowerState) {
+      window.electronAPI.getPowerState().then(state => {
+        if (state) this.setPowerState(state.onBattery);
+      }).catch(() => {});
+
+      if (window.electronAPI.onPowerStateChanged) {
+        window.electronAPI.onPowerStateChanged(state => {
+          if (state) this.setPowerState(state.onBattery);
+        });
+      }
+    }
+
+    if (navigator.getBattery) {
+      navigator.getBattery().then(battery => {
+        this.setPowerState(!battery.charging);
+        battery.addEventListener('chargingchange', () => {
+          this.setPowerState(!battery.charging);
+        });
+      }).catch(() => {});
+    }
+  },
+
+  setPowerState(isOnBattery) {
+    this.onBattery = !!isOnBattery;
+    this.targetFps = this.onBattery ? 60 : 144;
+    this.minFrameDelta = 1000 / this.targetFps;
+  },
+
+  shouldRender(lastTimestamp, currentTimestamp) {
+    return (currentTimestamp - lastTimestamp) >= (this.minFrameDelta - 1);
+  }
+};
+AdaptiveFPS.init();
+
 // ─── File open ──────────────────────────────────────────────────────────────
 async function openFile() {
   if (window.electronAPI && window.electronAPI.openFileDialog) {
@@ -6186,7 +6227,15 @@ const RecentFileManager = (function() {
     }
 
     runFrame(now) {
-      const dt = Math.min((now - this.lastTime) / 1000, 0.05);
+      if (!AdaptiveFPS.shouldRender(this.lastRenderTime || 0, now)) {
+        if (this.rafId != null) {
+          this.rafId = requestAnimationFrame(this.runFrame);
+        }
+        return;
+      }
+      this.lastRenderTime = now;
+
+      const dt = Math.min((now - (this.lastTime || now)) / 1000, 0.05);
       this.lastTime = now;
       const tau = Math.max(this.options.smoothing, 1) / 1000;
       const k = 1 - Math.exp(-dt / tau);
@@ -6737,13 +6786,19 @@ const PixelBlastBg = (function initPixelBlast() {
 
   window.addEventListener('pointerdown', onPointerDown, { passive: true });
 
-  function render() {
+  let lastPbRenderTime = 0;
+  function render(time) {
     if (!running) return;
     animId = requestAnimationFrame(render);
 
     if (document.body.classList.contains('doc-loaded')) {
       return;
     }
+
+    if (!AdaptiveFPS.shouldRender(lastPbRenderTime, time || performance.now())) {
+      return;
+    }
+    lastPbRenderTime = time || performance.now();
 
     const t = (performance.now() - startTime) * 0.001 * 0.5;
 

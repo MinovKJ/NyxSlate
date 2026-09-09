@@ -13,5 +13,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onEscapePressed: (callback) => {
     ipcRenderer.on('escape-pressed', () => callback());
+  },
+  getPowerState: () => ipcRenderer.invoke('get-power-state'),
+  onPowerStateChanged: (callback) => {
+    ipcRenderer.on('power-state-changed', (_event, data) => callback(data));
   }
 });

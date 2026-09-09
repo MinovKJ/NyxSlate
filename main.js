@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -146,8 +146,27 @@ ipcMain.handle('file-read', async (_event, filePath) => {
   return null;
 });
 
+// Battery vs AC power detection (60 FPS on Battery, 144 FPS when plugged in)
+ipcMain.handle('get-power-state', () => {
+  try {
+    const onBattery = powerMonitor.isOnBatteryPower ? powerMonitor.isOnBatteryPower() : false;
+    return { onBattery, targetFps: onBattery ? 60 : 144 };
+  } catch (e) {
+    return { onBattery: false, targetFps: 144 };
+  }
+});
+
 app.whenReady().then(() => {
   createWindow();
+
+  if (powerMonitor) {
+    powerMonitor.on('on-battery', () => {
+      mainWindow?.webContents?.send('power-state-changed', { onBattery: true, targetFps: 60 });
+    });
+    powerMonitor.on('on-ac', () => {
+      mainWindow?.webContents?.send('power-state-changed', { onBattery: false, targetFps: 144 });
+    });
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
