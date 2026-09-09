@@ -347,9 +347,10 @@ ipcMain.handle('start-install', async (_event, options) => {
   const payloadDir = getPayloadDir();
 
   try {
-    // Terminate any running NyxSlate instances to prevent locked file errors during updates
+    // Terminate other running NyxSlate instances (excluding this installer process) to prevent locked file errors during updates
     try {
-      execSync('powershell -NoProfile -Command "Stop-Process -Name NyxSlate, electron -Force -ErrorAction SilentlyContinue"', {
+      const myPid = process.pid;
+      execSync(`powershell -NoProfile -Command "Get-Process -Name NyxSlate, electron -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne ${myPid} } | Stop-Process -Force -ErrorAction SilentlyContinue"`, {
         windowsHide: true,
         stdio: 'ignore'
       });
