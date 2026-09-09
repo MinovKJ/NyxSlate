@@ -159,17 +159,49 @@ ipcMain.handle('start-uninstall', async () => {
       });
     } catch (e) { /* ignore */ }
 
-    // Step 3: Schedule background file deletion silently (hidden PowerShell process, no batch/cmd window)
+    // Step 3: Remove application files immediately (non-running assets)
     uninstallerWindow.webContents.send('uninstall-progress', {
       percent: 75,
       status: 'Removing application files...'
     });
 
-    const psCleanup = `Start-Sleep -Seconds 2; Remove-Item -LiteralPath '${installDir.replace(/'/g, "''")}' -Recurse -Force -ErrorAction SilentlyContinue`;
+    try {
+      const entries = fs.readdirSync(installDir);
+      for (const entry of entries) {
+        if (entry === 'node_modules' || entry === 'uninstaller-main.js' || entry === 'uninstaller.html' || entry === 'uninstaller-preload.js') {
+          continue; // These runtime files will be removed as soon as the uninstaller window closes
+        }
+        const fullPath = path.join(installDir, entry);
+        try {
+          if (fs.statSync(fullPath).isDirectory()) {
+            fs.rmSync(fullPath, { recursive: true, force: true });
+          } else {
+            fs.unlinkSync(fullPath);
+          }
+        } catch (e) {}
+      }
+    } catch (e) {}
+
+    // Step 4: Schedule background cleanup to remove the entire install directory as soon as this uninstaller process exits
+    const currentPid = process.pid;
+    const psCleanup = `
+      try { Wait-Process -Id ${currentPid} -Timeout 300 -ErrorAction SilentlyContinue } catch {}
+      Start-Sleep -Milliseconds 600
+      for ($i = 0; $i -lt 20; $i++) {
+        try {
+          if (!(Test-Path -LiteralPath '${installDir.replace(/'/g, "''")}')) { break }
+          Remove-Item -LiteralPath '${installDir.replace(/'/g, "''")}' -Recurse -Force -ErrorAction Stop
+          break
+        } catch {
+          Start-Sleep -Seconds 1
+        }
+      }
+    `;
+
     const child = spawn('powershell.exe', [
       '-NoProfile',
       '-WindowStyle', 'Hidden',
-      '-Command', psCleanup
+      '-Command', psCleanup.replace(/\r?\n/g, '; ')
     ], {
       detached: true,
       stdio: 'ignore',
