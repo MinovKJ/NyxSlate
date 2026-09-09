@@ -186,14 +186,48 @@ try { Wait-Process -Id ${currentPid} -Timeout 120 -ErrorAction SilentlyContinue 
 Start-Sleep -Milliseconds 800
 Stop-Process -Name NyxSlate, electron -Force -ErrorAction SilentlyContinue
 $target = '${installDir.replace(/'/g, "''")}'
-for ($i = 0; $i -lt 30; $i++) {
-    if (!(Test-Path -LiteralPath $target)) { break }
-    try {
-        [System.IO.Directory]::Delete($target, $true)
+
+$protected = @(
+    $env:SystemDrive + '\\',
+    $env:SystemRoot,
+    $env:windir,
+    $env:ProgramFiles,
+    \${env:ProgramFiles(x86)},
+    $env:USERPROFILE,
+    [Environment]::GetFolderPath('Desktop'),
+    [Environment]::GetFolderPath('MyDocuments'),
+    (Join-Path $env:USERPROFILE 'Downloads'),
+    $env:LOCALAPPDATA,
+    $env:APPDATA
+)
+
+$targetNormalized = [System.IO.Path]::GetFullPath($target).TrimEnd('\\', '/')
+$isRootOrProtected = ($targetNormalized.Length -le 3)
+foreach ($p in $protected) {
+    if ($p -and ($targetNormalized -ieq [System.IO.Path]::GetFullPath($p).TrimEnd('\\', '/'))) {
+        $isRootOrProtected = $true
         break
-    } catch {
-        try { cmd.exe /c "rd /s /q ""$target""" } catch {}
-        Start-Sleep -Seconds 1
+    }
+}
+
+if (!$isRootOrProtected) {
+    for ($i = 0; $i -lt 30; $i++) {
+        if (!(Test-Path -LiteralPath $target)) { break }
+        try {
+            [System.IO.Directory]::Delete($target, $true)
+            break
+        } catch {
+            try { cmd.exe /c "rd /s /q ""$target""" } catch {}
+            Start-Sleep -Seconds 1
+        }
+    }
+} else {
+    $files = @('node_modules', 'index.html', 'main.js', 'preload.js', 'package.json', 'package-lock.json', 'icon.ico', 'icon.png', 'pdf-lib.min.js', 'pdf.min.js', 'pdf.worker.min.js', 'Launch NyxSlate.bat', 'Uninstall NyxSlate.bat', 'uninstall.bat', 'uninstaller-main.js', 'uninstaller-preload.js', 'uninstaller.html')
+    foreach ($f in $files) {
+        $fp = Join-Path $target $f
+        if (Test-Path -LiteralPath $fp) {
+            Remove-Item -LiteralPath $fp -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue

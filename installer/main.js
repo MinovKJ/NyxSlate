@@ -233,7 +233,11 @@ ipcMain.handle('browse-directory', async () => {
     properties: ['openDirectory', 'createDirectory']
   });
   if (result.canceled || !result.filePaths.length) return null;
-  return result.filePaths[0];
+  let chosen = result.filePaths[0];
+  if (path.basename(chosen).toLowerCase() !== 'nyxslate') {
+    chosen = path.join(chosen, 'NyxSlate');
+  }
+  return chosen;
 });
 
 ipcMain.handle('get-disk-space', async (_event, dir) => {
