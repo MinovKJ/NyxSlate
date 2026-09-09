@@ -84,14 +84,6 @@ foreach ($file in $filesToCopy) {
                 Write-Host "  + Created NyxSlate.exe with custom embedded icon" -ForegroundColor Green
             }
         }
-
-        # Copy pdf-lib if it exists in node_modules
-        $pdfLibDir = Join-Path $nodeModulesSrc "pdf-lib"
-        if (Test-Path $pdfLibDir) {
-            $pdfLibDst = Join-Path $nodeModulesDst "pdf-lib"
-            Copy-Item $pdfLibDir -Destination $pdfLibDst -Recurse -Force
-            Write-Host "  + node_modules/pdf-lib" -ForegroundColor Green
-        }
     }
 else {
     Write-Host "  WARNING: node_modules not found! Run npm install in the project root first." -ForegroundColor Red

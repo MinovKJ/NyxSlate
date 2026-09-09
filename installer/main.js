@@ -50,40 +50,34 @@ function getDefaultInstallPath() {
   return path.join(process.env.LOCALAPPDATA || 'C:\\Users\\Public', 'NyxSlate');
 }
 
-function copyRecursive(src, dest, progressCb) {
-  if (!fs.existsSync(dest)) {
-    fs.mkdirSync(dest, { recursive: true });
-  }
-  const entries = fs.readdirSync(src, { withFileTypes: true });
+async function copyRecursiveAsync(src, dest, progressCb) {
+  await fs.promises.mkdir(dest, { recursive: true });
+  const entries = await fs.promises.readdir(src, { withFileTypes: true });
   for (const entry of entries) {
     const srcPath = path.join(src, entry.name);
     const destPath = path.join(dest, entry.name);
     if (entry.isDirectory()) {
-      copyRecursive(srcPath, destPath, progressCb);
+      await copyRecursiveAsync(srcPath, destPath, progressCb);
     } else {
-      // Retry logic for EPERM/EBUSY (antivirus, locked files)
       let retries = 3;
       while (retries > 0) {
         try {
-          // If destination exists and might be locked, try removing first
           if (fs.existsSync(destPath)) {
-            try { fs.unlinkSync(destPath); } catch (e) { /* ignore */ }
+            try { await fs.promises.unlink(destPath); } catch (e) { /* ignore */ }
           }
-          fs.copyFileSync(srcPath, destPath);
-          break; // success
+          await fs.promises.copyFile(srcPath, destPath);
+          break;
         } catch (err) {
           retries--;
           if (retries === 0) {
-            // Skip this file but don't abort the entire install
             if (progressCb) progressCb(`SKIPPED: ${entry.name} (${err.code})`);
             break;
           }
-          // Small delay before retry
-          const start = Date.now();
-          while (Date.now() - start < 500) { /* busy wait */ }
+          await new Promise(r => setTimeout(r, 100));
         }
       }
       if (progressCb) progressCb(entry.name);
+      await new Promise(r => setImmediate(r));
     }
   }
 }
@@ -146,28 +140,23 @@ function registerUninstaller(installPath) {
   const electronExe = fs.existsSync(nyxExe) ? nyxExe : path.join(installPath, 'node_modules', 'electron', 'dist', 'electron.exe');
   const uninstallerJs = path.join(installPath, 'uninstaller-main.js');
   const iconPath = path.join(installPath, 'icon.ico');
-  const payloadSize = Math.round(getDirSize(installPath) / 1024); // KB
 
-  const ps = `
-    $k = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NyxSlate'
-    if (!(Test-Path $k)) { New-Item -Path $k -Force | Out-Null }
-    Set-ItemProperty -Path $k -Name DisplayName -Value 'NyxSlate'
-    Set-ItemProperty -Path $k -Name DisplayVersion -Value '1.0.0'
-    Set-ItemProperty -Path $k -Name Publisher -Value 'NyxSlate Team'
-    Set-ItemProperty -Path $k -Name DisplayIcon -Value '${iconPath.replace(/'/g, "''")}'
-    Set-ItemProperty -Path $k -Name InstallLocation -Value '${installPath.replace(/'/g, "''")}'
-    Set-ItemProperty -Path $k -Name EstimatedSize -Value ${payloadSize} -Type DWord
-    Set-ItemProperty -Path $k -Name NoModify -Value 1 -Type DWord
-    Set-ItemProperty -Path $k -Name NoRepair -Value 1 -Type DWord
-    [Microsoft.Win32.Registry]::SetValue('HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NyxSlate', 'UninstallString', [char]34 + '${electronExe.replace(/'/g, "''")}' + [char]34 + ' --no-sandbox ' + [char]34 + '${uninstallerJs.replace(/'/g, "''")}' + [char]34)
-  `;
+  const regLines = [
+    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NyxSlate" /v "DisplayName" /t REG_SZ /d "NyxSlate" /f`,
+    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NyxSlate" /v "DisplayVersion" /t REG_SZ /d "1.0.0" /f`,
+    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NyxSlate" /v "Publisher" /t REG_SZ /d "NyxSlate Team" /f`,
+    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NyxSlate" /v "DisplayIcon" /t REG_SZ /d "${iconPath}" /f`,
+    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NyxSlate" /v "InstallLocation" /t REG_SZ /d "${installPath}" /f`,
+    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NyxSlate" /v "EstimatedSize" /t REG_DWORD /d 480000 /f`,
+    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NyxSlate" /v "NoModify" /t REG_DWORD /d 1 /f`,
+    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NyxSlate" /v "NoRepair" /t REG_DWORD /d 1 /f`,
+    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NyxSlate" /v "UninstallString" /t REG_SZ /d "\\"${electronExe}\\" --no-sandbox \\"${uninstallerJs}\\"" /f`,
+    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NyxSlate" /v "QuietUninstallString" /t REG_SZ /d "\\"${electronExe}\\" --no-sandbox \\"${uninstallerJs}\\"" /f`
+  ];
 
   try {
-    execSync(`powershell -NoProfile -WindowStyle Hidden -Command "${ps.replace(/\r?\n/g, '; ').replace(/"/g, '\\"')}"`, {
-      windowsHide: true,
-      stdio: 'ignore'
-    });
-  } catch (e) { /* continue */ }
+    execSync(regLines.join(' & '), { windowsHide: true, stdio: 'ignore' });
+  } catch (e) { /* ignore */ }
 }
 
 // ── Set PDF File Association ─────────────────────────────────────────────────
@@ -175,117 +164,51 @@ function registerUninstaller(installPath) {
 function setPdfAssociation(installPath, isDefault = false) {
   const nyxExe = path.join(installPath, 'node_modules', 'electron', 'dist', 'NyxSlate.exe');
   const electronExe = fs.existsSync(nyxExe) ? nyxExe : path.join(installPath, 'node_modules', 'electron', 'dist', 'electron.exe');
-  const iconPath = path.join(installPath, 'icon.ico');
-  const openCommand = `"${electronExe}" "${installPath}" "%1"`;
+  const openCommand = `\\"${electronExe}\\" \\"${installPath}\\" \\"%1\\"`;
 
-  function regAdd(key, valueName, data, type = 'REG_SZ') {
-    try {
-      const vFlag = valueName === '' ? '/ve' : `/v "${valueName}"`;
-      const tFlag = `/t ${type}`;
-      const dFlag = data === '' ? '/d ""' : `/d "${data.replace(/"/g, '\\"')}"`;
-      execSync(`reg.exe add "${key}" ${vFlag} ${tFlag} ${dFlag} /f`, { windowsHide: true, stdio: 'ignore' });
-    } catch (e) { /* ignore */ }
-  }
-
-  function regDel(key) {
-    try {
-      execSync(`reg.exe delete "${key}" /f`, { windowsHide: true, stdio: 'ignore' });
-    } catch (e) { /* ignore */ }
-  }
+  const regLines = [
+    ...(isDefault ? [`reg add "HKCU\\Software\\Classes\\.pdf" /ve /t REG_SZ /d "NyxSlate.PDF" /f`] : []),
+    `reg add "HKCU\\Software\\Classes\\.pdf\\OpenWithProgids" /v "NyxSlate.PDF" /t REG_SZ /d "" /f`,
+    `reg add "HKCU\\Software\\Classes\\.pdf\\OpenWithList\\NyxSlate.exe" /ve /t REG_SZ /d "" /f`,
+    `reg add "HKCU\\Software\\Classes\\NyxSlate.PDF" /ve /t REG_SZ /d "NyxSlate PDF Document" /f`,
+    `reg add "HKCU\\Software\\Classes\\NyxSlate.PDF" /v "FriendlyTypeName" /t REG_SZ /d "NyxSlate PDF Document" /f`,
+    `reg add "HKCU\\Software\\Classes\\NyxSlate.PDF\\DefaultIcon" /ve /t REG_SZ /d "${electronExe},0" /f`,
+    `reg add "HKCU\\Software\\Classes\\NyxSlate.PDF\\shell\\open" /v "FriendlyAppName" /t REG_SZ /d "NyxSlate" /f`,
+    `reg add "HKCU\\Software\\Classes\\NyxSlate.PDF\\shell\\open\\command" /ve /t REG_SZ /d "${openCommand}" /f`,
+    `reg add "HKCU\\Software\\Classes\\Applications\\NyxSlate.exe" /v "FriendlyAppName" /t REG_SZ /d "NyxSlate" /f`,
+    `reg add "HKCU\\Software\\Classes\\Applications\\NyxSlate.exe" /v "ApplicationCompany" /t REG_SZ /d "NyxSlate" /f`,
+    `reg add "HKCU\\Software\\Classes\\Applications\\NyxSlate.exe\\DefaultIcon" /ve /t REG_SZ /d "${electronExe},0" /f`,
+    `reg add "HKCU\\Software\\Classes\\Applications\\NyxSlate.exe\\SupportedTypes" /v ".pdf" /t REG_SZ /d "" /f`,
+    `reg add "HKCU\\Software\\Classes\\Applications\\NyxSlate.exe\\shell\\open" /v "FriendlyAppName" /t REG_SZ /d "NyxSlate" /f`,
+    `reg add "HKCU\\Software\\Classes\\Applications\\NyxSlate.exe\\shell\\open\\command" /ve /t REG_SZ /d "${openCommand}" /f`,
+    `reg delete "HKCU\\Software\\Classes\\Applications\\electron.exe" /f 2>nul`,
+    `reg add "HKCU\\Software\\RegisteredApplications" /v "NyxSlate" /t REG_SZ /d "Software\\NyxSlate\\Capabilities" /f`,
+    `reg add "HKCU\\Software\\NyxSlate\\Capabilities" /v "ApplicationName" /t REG_SZ /d "NyxSlate" /f`,
+    `reg add "HKCU\\Software\\NyxSlate\\Capabilities" /v "ApplicationDescription" /t REG_SZ /d "NyxSlate PDF Reader" /f`,
+    `reg add "HKCU\\Software\\NyxSlate\\Capabilities\\FileAssociations" /v ".pdf" /t REG_SZ /d "NyxSlate.PDF" /f`,
+    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\OpenWithProgids" /v "NyxSlate.PDF" /t REG_NONE /d "" /f`,
+    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\OpenWithList" /v "a" /t REG_SZ /d "NyxSlate.exe" /f`,
+    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\OpenWithList" /v "MRUList" /t REG_SZ /d "a" /f`,
+    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\NyxSlate.exe" /ve /t REG_SZ /d "${electronExe}" /f`,
+    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\NyxSlate.exe" /v "Path" /t REG_SZ /d "${installPath}" /f`
+  ];
 
   try {
-    // 1. Classes .pdf
-    if (isDefault) {
-      regAdd('HKCU\\Software\\Classes\\.pdf', '', 'NyxSlate.PDF');
-    }
-    regAdd('HKCU\\Software\\Classes\\.pdf\\OpenWithProgids', 'NyxSlate.PDF', '');
-    regAdd('HKCU\\Software\\Classes\\.pdf\\OpenWithList\\NyxSlate.exe', '', '');
+    execSync(regLines.join(' & '), { windowsHide: true, stdio: 'ignore' });
+  } catch (e) { /* ignore */ }
 
-    // 2. Classes NyxSlate.PDF
-    regAdd('HKCU\\Software\\Classes\\NyxSlate.PDF', '', 'NyxSlate PDF Document');
-    regAdd('HKCU\\Software\\Classes\\NyxSlate.PDF', 'FriendlyTypeName', 'NyxSlate PDF Document');
-    regAdd('HKCU\\Software\\Classes\\NyxSlate.PDF\\DefaultIcon', '', `${electronExe},0`);
-    regAdd('HKCU\\Software\\Classes\\NyxSlate.PDF\\shell\\open', 'FriendlyAppName', 'NyxSlate');
-    regAdd('HKCU\\Software\\Classes\\NyxSlate.PDF\\shell\\open\\command', '', openCommand);
-
-    // 3. Applications\\NyxSlate.exe (Windows extracts the embedded gold/dark icon directly from NyxSlate.exe)
-    regAdd('HKCU\\Software\\Classes\\Applications\\NyxSlate.exe', 'FriendlyAppName', 'NyxSlate');
-    regAdd('HKCU\\Software\\Classes\\Applications\\NyxSlate.exe', 'ApplicationCompany', 'NyxSlate');
-    regAdd('HKCU\\Software\\Classes\\Applications\\NyxSlate.exe\\DefaultIcon', '', `${electronExe},0`);
-    regAdd('HKCU\\Software\\Classes\\Applications\\NyxSlate.exe\\SupportedTypes', '.pdf', '');
-    regAdd('HKCU\\Software\\Classes\\Applications\\NyxSlate.exe\\shell\\open', 'FriendlyAppName', 'NyxSlate');
-    regAdd('HKCU\\Software\\Classes\\Applications\\NyxSlate.exe\\shell\\open\\command', '', openCommand);
-
-    // Clean old electron.exe app registration so Windows doesn't show old Atom icon
-    regDel('HKCU\\Software\\Classes\\Applications\\electron.exe');
-
-    // 4. RegisteredApplications & Capabilities
-    regAdd('HKCU\\Software\\RegisteredApplications', 'NyxSlate', 'Software\\NyxSlate\\Capabilities');
-    regAdd('HKCU\\Software\\NyxSlate\\Capabilities', 'ApplicationName', 'NyxSlate');
-    regAdd('HKCU\\Software\\NyxSlate\\Capabilities', 'ApplicationDescription', 'NyxSlate PDF Reader');
-    regAdd('HKCU\\Software\\NyxSlate\\Capabilities\\FileAssociations', '.pdf', 'NyxSlate.PDF');
-
-    // 5. Explorer FileExts
-    regAdd('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\OpenWithProgids', 'NyxSlate.PDF', '', 'REG_NONE');
-    regAdd('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\OpenWithList', 'a', 'NyxSlate.exe');
-    regAdd('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\OpenWithList', 'MRUList', 'a');
-
-    // 6. App Paths
-    regAdd('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\NyxSlate.exe', '', electronExe);
-    regAdd('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\NyxSlate.exe', 'Path', installPath);
-
-    // 7. Notify Windows Shell (SHChangeNotify)
-    const psAssoc = `
-      $sig = @'
-      [DllImport("shell32.dll")]
-      public static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
-'@
-      $t = Add-Type -MemberDefinition $sig -Name 'Win32SHAssoc' -Namespace 'Win32' -PassThru
-      $t::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
-    `;
+  if (isDefault) {
     try {
-      execSync(`powershell -NoProfile -Command "${psAssoc.replace(/\r?\n/g, ' ')}"`, { windowsHide: true, stdio: 'ignore' });
+      const child = spawn('cmd.exe', ['/c', 'start', 'ms-settings:defaultapps'], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true
+      });
+      child.unref();
     } catch (e) {}
-
-    // 8. If user requested default, launch Windows Default Apps UI focused on NyxSlate
-    if (isDefault) {
-      const psDefault = `
-        try {
-          $typeDef = @'
-          using System;
-          using System.Runtime.InteropServices;
-          [ComImport, Guid("1f76a169-f9f3-4047-867b-3e5b4e4da7d4"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-          public interface IAppAssocUI {
-              [PreserveSig] int LaunchAdvancedAssociationUI([MarshalAs(UnmanagedType.LPWStr)] string pszAppRegName);
-          }
-          [ComImport, Guid("19689bf6-c384-4805-a776-11d265045415")]
-          public class AppAssocUI {}
-          public class DefaultRunner {
-              public static void Launch(string name) {
-                  try {
-                      IAppAssocUI ui = (IAppAssocUI)new AppAssocUI();
-                      ui.LaunchAdvancedAssociationUI(name);
-                  } catch {}
-              }
-          }
-'@
-          Add-Type -TypeDefinition $typeDef -Language CSharp
-          [DefaultRunner]::Launch('NyxSlate')
-        } catch {
-          Start-Process 'ms-settings:defaultapps'
-        }
-      `;
-      try {
-        const child = spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', psDefault.replace(/\r?\n/g, ' ')], {
-          detached: true,
-          stdio: 'ignore',
-          windowsHide: true
-        });
-        child.unref();
-      } catch (e) {}
-    }
-  } catch (e) { /* continue */ }
+  }
 }
+
 
 // ── IPC Handlers ─────────────────────────────────────────────────────────────
 
@@ -362,14 +285,16 @@ ipcMain.handle('start-install', async (_event, options) => {
       fs.mkdirSync(installPath, { recursive: true });
     }
 
-    copyRecursive(payloadDir, installPath, (fileName) => {
+    await copyRecursiveAsync(payloadDir, installPath, (fileName) => {
       copiedFiles++;
-      const percent = Math.round((copiedFiles / totalFiles) * 70); // 0-70%
-      installerWindow.webContents.send('install-progress', {
-        phase: 'copying',
-        percent,
-        status: `Copying: ${fileName}`
-      });
+      const percent = Math.min(70, Math.round((copiedFiles / Math.max(1, totalFiles)) * 70));
+      if (installerWindow && !installerWindow.isDestroyed()) {
+        installerWindow.webContents.send('install-progress', {
+          phase: 'copying',
+          percent,
+          status: `Copying: ${fileName}`
+        });
+      }
     });
 
     // Step 2: Create uninstaller
@@ -440,6 +365,10 @@ pause
       const startMenuDir = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs');
       const startMenuPath = path.join(startMenuDir, 'NyxSlate.lnk');
       createShortcut(startMenuPath, launchTarget, launchArgs, iconFile, 'NyxSlate — PDF Reader');
+
+      const uninstallJs = path.join(installPath, 'uninstaller-main.js');
+      const uninstallShortcutPath = path.join(startMenuDir, 'Uninstall NyxSlate.lnk');
+      createShortcut(uninstallShortcutPath, electronExe, `--no-sandbox "${uninstallJs}"`, iconFile, 'Uninstall NyxSlate');
     }
 
     // Step 4: Register uninstaller

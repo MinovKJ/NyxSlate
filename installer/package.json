@@ -20,21 +20,12 @@
     "artifactName": "NyxSlate-Setup-${version}.${ext}",
     "win": {
       "target": {
-        "target": "nsis",
+        "target": "portable",
         "arch": ["x64"]
       },
       "icon": "../icon.ico"
     },
-    "nsis": {
-      "oneClick": true,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": false,
-      "installerIcon": "../icon.ico",
-      "uninstallerIcon": "../icon.ico",
-      "installerHeaderIcon": "../icon.ico",
-      "deleteAppDataOnUninstall": true,
-      "shortcutName": "NyxSlate Setup"
-    },
+
     "files": [
       "main.js",
       "preload.js",

@@ -123,40 +123,26 @@ ipcMain.handle('start-uninstall', async () => {
       try { fs.unlinkSync(startMenuUninstallShortcut); } catch (e) {}
     }
 
-    // Step 2: Remove registry entries silently in ONE hidden PowerShell call
+    // Step 2: Remove registry entries silently and immediately
     uninstallerWindow.webContents.send('uninstall-progress', {
       percent: 50,
       status: 'Cleaning registry entries...'
     });
 
-    const regScript = `
-      Remove-Item -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NyxSlate' -Recurse -Force -ErrorAction SilentlyContinue
-      Remove-Item -Path 'HKCU:\\Software\\Classes\\NyxSlate.PDF' -Recurse -Force -ErrorAction SilentlyContinue
-      Remove-Item -Path 'HKCU:\\Software\\Classes\\Applications\\electron.exe' -Recurse -Force -ErrorAction SilentlyContinue
-      Remove-Item -Path 'HKCU:\\Software\\Classes\\Applications\\NyxSlate.exe' -Recurse -Force -ErrorAction SilentlyContinue
-      Remove-Item -Path 'HKCU:\\Software\\NyxSlate' -Recurse -Force -ErrorAction SilentlyContinue
-      Remove-ItemProperty -Path 'HKCU:\\Software\\RegisteredApplications' -Name 'NyxSlate' -ErrorAction SilentlyContinue
-      Remove-ItemProperty -Path 'HKCU:\\Software\\Classes\\.pdf\\OpenWithProgids' -Name 'NyxSlate.PDF' -ErrorAction SilentlyContinue
-      Remove-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\OpenWithProgids' -Name 'NyxSlate.PDF' -ErrorAction SilentlyContinue
-      Remove-Item -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\NyxSlate.exe' -Recurse -Force -ErrorAction SilentlyContinue
-      try {
-        $pdf = (Get-ItemProperty -Path 'HKCU:\\Software\\Classes\\.pdf' -ErrorAction SilentlyContinue).'(default)'
-        if ($pdf -eq 'NyxSlate.PDF') {
-          Remove-Item -Path 'HKCU:\\Software\\Classes\\.pdf' -Recurse -Force -ErrorAction SilentlyContinue
-        }
-      } catch {}
-      try {
-        $sig = @'
-        [DllImport("shell32.dll")]
-        public static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
-'@
-        $t = Add-Type -MemberDefinition $sig -Name 'Win32SHUn' -Namespace 'Win32' -PassThru
-        $t::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
-      } catch {}
-    `;
+    const regDeletes = [
+      'reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NyxSlate" /f',
+      'reg delete "HKCU\\Software\\Classes\\NyxSlate.PDF" /f',
+      'reg delete "HKCU\\Software\\Classes\\Applications\\electron.exe" /f',
+      'reg delete "HKCU\\Software\\Classes\\Applications\\NyxSlate.exe" /f',
+      'reg delete "HKCU\\Software\\NyxSlate" /f',
+      'reg delete "HKCU\\Software\\RegisteredApplications" /v "NyxSlate" /f',
+      'reg delete "HKCU\\Software\\Classes\\.pdf\\OpenWithProgids" /v "NyxSlate.PDF" /f',
+      'reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\OpenWithProgids" /v "NyxSlate.PDF" /f',
+      'reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\NyxSlate.exe" /f'
+    ];
 
     try {
-      execSync(`powershell -NoProfile -WindowStyle Hidden -Command "${regScript.replace(/\r?\n/g, '; ').replace(/"/g, '\\"')}"`, {
+      execSync(`cmd.exe /c "${regDeletes.join(' & ')}"`, {
         windowsHide: true,
         stdio: 'ignore'
       });
@@ -186,40 +172,41 @@ ipcMain.handle('start-uninstall', async () => {
       }
     } catch (e) {}
 
-    // Step 4: Schedule 100% hidden background cleanup that wipes the remaining directory once this uninstaller process exits
+    // Step 4: Schedule 100% independent background cleanup that wipes the remaining directory once this uninstaller process exits
     uninstallerWindow.webContents.send('uninstall-progress', {
       percent: 90,
       status: 'Finalizing uninstallation...'
     });
 
-    const psCleanup = `
-      $p = ${currentPid}
-      try { Wait-Process -Id $p -Timeout 300 -ErrorAction SilentlyContinue } catch {}
-      Start-Sleep -Milliseconds 600
-      $target = '${installDir.replace(/'/g, "''")}';
-      for ($i = 0; $i -lt 30; $i++) {
-        if (!(Test-Path -LiteralPath $target)) { break }
-        try {
-          [System.IO.Directory]::Delete($target, $true)
-          break
-        } catch {
-          try { & cmd.exe /c ('rd /s /q "' + $target + '"') *>$null } catch {}
-          Start-Sleep -Seconds 1
-        }
-      }
-    `;
+    const tempDir = process.env.TEMP || 'C:\\Windows\\Temp';
+    const ps1Path = path.join(tempDir, `nyx_cleanup_${Date.now()}.ps1`);
 
-    const child = spawn('powershell.exe', [
-      '-NoProfile',
-      '-WindowStyle', 'Hidden',
-      '-Command', psCleanup.replace(/\r?\n/g, '; ')
-    ], {
-      cwd: process.env.TEMP || 'C:\\Windows\\Temp',
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true
-    });
-    child.unref();
+    const ps1Script = `
+try { Wait-Process -Id ${currentPid} -Timeout 120 -ErrorAction SilentlyContinue } catch {}
+Start-Sleep -Milliseconds 800
+Stop-Process -Name NyxSlate, electron -Force -ErrorAction SilentlyContinue
+$target = '${installDir.replace(/'/g, "''")}'
+for ($i = 0; $i -lt 30; $i++) {
+    if (!(Test-Path -LiteralPath $target)) { break }
+    try {
+        [System.IO.Directory]::Delete($target, $true)
+        break
+    } catch {
+        try { cmd.exe /c "rd /s /q ""$target""" } catch {}
+        Start-Sleep -Seconds 1
+    }
+}
+Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+`;
+
+    try {
+      fs.writeFileSync(ps1Path, ps1Script, 'utf8');
+      execSync(`start "" /b powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${ps1Path}"`, {
+        cwd: tempDir,
+        windowsHide: true,
+        stdio: 'ignore'
+      });
+    } catch (e) { /* ignore */ }
 
     uninstallerWindow.webContents.send('uninstall-progress', {
       percent: 100,
@@ -227,6 +214,8 @@ ipcMain.handle('start-uninstall', async () => {
     });
 
     uninstallerWindow.webContents.send('uninstall-complete', {});
+
+
 
     return { success: true };
   } catch (err) {
