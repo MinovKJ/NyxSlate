@@ -210,7 +210,10 @@ foreach ($p in $protected) {
     }
 }
 
-if (!$isRootOrProtected) {
+$isNyxSubfolder = ([System.IO.Path]::GetFileName($targetNormalized) -ieq 'NyxSlate')
+
+if (!$isRootOrProtected -and $isNyxSubfolder) {
+    # Safe to delete the dedicated NyxSlate folder (parent folder remains 100% untouched)
     for ($i = 0; $i -lt 30; $i++) {
         if (!(Test-Path -LiteralPath $target)) { break }
         try {
@@ -222,8 +225,9 @@ if (!$isRootOrProtected) {
         }
     }
 } else {
-    $files = @('node_modules', 'index.html', 'main.js', 'preload.js', 'package.json', 'package-lock.json', 'icon.ico', 'icon.png', 'pdf-lib.min.js', 'pdf.min.js', 'pdf.worker.min.js', 'Launch NyxSlate.bat', 'Uninstall NyxSlate.bat', 'uninstall.bat', 'uninstaller-main.js', 'uninstaller-preload.js', 'uninstaller.html')
-    foreach ($f in $files) {
+    # Not a dedicated NyxSlate folder: NEVER delete the directory itself, only delete app files
+    $appFiles = @('node_modules', 'index.html', 'main.js', 'preload.js', 'package.json', 'package-lock.json', 'icon.ico', 'icon.png', 'pdf-lib.min.js', 'pdf.min.js', 'pdf.worker.min.js', 'Launch NyxSlate.bat', 'Uninstall NyxSlate.bat', 'uninstall.bat', 'uninstaller-main.js', 'uninstaller-preload.js', 'uninstaller.html', 'install-manifest.json')
+    foreach ($f in $appFiles) {
         $fp = Join-Path $target $f
         if (Test-Path -LiteralPath $fp) {
             Remove-Item -LiteralPath $fp -Recurse -Force -ErrorAction SilentlyContinue
