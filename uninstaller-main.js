@@ -94,6 +94,16 @@ ipcMain.handle('get-install-info', () => {
 
 ipcMain.handle('start-uninstall', async () => {
   try {
+    const currentPid = process.pid;
+
+    // Step 0: Terminate any running NyxSlate application instances (other than this uninstaller)
+    try {
+      execSync(`powershell -NoProfile -Command "Get-Process -Name NyxSlate, electron -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne ${currentPid} } | Stop-Process -Force -ErrorAction SilentlyContinue"`, {
+        windowsHide: true,
+        stdio: 'ignore'
+      });
+    } catch (e) { /* ignore */ }
+
     // Step 1: Remove shortcuts silently using native node fs
     uninstallerWindow.webContents.send('uninstall-progress', {
       percent: 15,
@@ -121,9 +131,9 @@ ipcMain.handle('start-uninstall', async () => {
       try { fs.unlinkSync(startMenuUninstallShortcut); } catch (e) {}
     }
 
-    // Step 2: Remove registry entries silently in ONE hidden PowerShell call (no cmd)
+    // Step 2: Remove registry entries silently in ONE hidden PowerShell call
     uninstallerWindow.webContents.send('uninstall-progress', {
-      percent: 45,
+      percent: 40,
       status: 'Cleaning registry entries...'
     });
 
@@ -131,6 +141,7 @@ ipcMain.handle('start-uninstall', async () => {
       Remove-Item -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NyxSlate' -Recurse -Force -ErrorAction SilentlyContinue
       Remove-Item -Path 'HKCU:\\Software\\Classes\\NyxSlate.PDF' -Recurse -Force -ErrorAction SilentlyContinue
       Remove-Item -Path 'HKCU:\\Software\\Classes\\Applications\\electron.exe' -Recurse -Force -ErrorAction SilentlyContinue
+      Remove-Item -Path 'HKCU:\\Software\\Classes\\Applications\\NyxSlate.exe' -Recurse -Force -ErrorAction SilentlyContinue
       Remove-Item -Path 'HKCU:\\Software\\NyxSlate' -Recurse -Force -ErrorAction SilentlyContinue
       Remove-ItemProperty -Path 'HKCU:\\Software\\RegisteredApplications' -Name 'NyxSlate' -ErrorAction SilentlyContinue
       Remove-ItemProperty -Path 'HKCU:\\Software\\Classes\\.pdf\\OpenWithProgids' -Name 'NyxSlate.PDF' -ErrorAction SilentlyContinue
@@ -159,55 +170,92 @@ ipcMain.handle('start-uninstall', async () => {
       });
     } catch (e) { /* ignore */ }
 
-    // Step 3: Remove application files immediately (non-running assets)
+    // Step 3: Remove application files immediately (delete all non-locked files)
     uninstallerWindow.webContents.send('uninstall-progress', {
-      percent: 75,
+      percent: 70,
       status: 'Removing application files...'
     });
 
-    try {
-      const entries = fs.readdirSync(installDir);
+    function cleanDirRecursive(dir) {
+      if (!fs.existsSync(dir)) return;
+      let entries = [];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch (e) { return; }
+
       for (const entry of entries) {
-        if (entry === 'node_modules' || entry === 'uninstaller-main.js' || entry === 'uninstaller.html' || entry === 'uninstaller-preload.js') {
-          continue; // These runtime files will be removed as soon as the uninstaller window closes
+        const fullPath = path.join(dir, entry.name);
+        // Do not delete uninstaller scripts while actively executing
+        if (dir === installDir && (entry.name === 'uninstaller-main.js' || entry.name === 'uninstaller.html' || entry.name === 'uninstaller-preload.js')) {
+          continue;
         }
-        const fullPath = path.join(installDir, entry);
         try {
-          if (fs.statSync(fullPath).isDirectory()) {
-            fs.rmSync(fullPath, { recursive: true, force: true });
+          if (entry.isDirectory()) {
+            cleanDirRecursive(fullPath);
+            try { fs.rmdirSync(fullPath); } catch (e) {}
           } else {
             fs.unlinkSync(fullPath);
           }
-        } catch (e) {}
-      }
-    } catch (e) {}
-
-    // Step 4: Schedule background cleanup to remove the entire install directory as soon as this uninstaller process exits
-    const currentPid = process.pid;
-    const psCleanup = `
-      try { Wait-Process -Id ${currentPid} -Timeout 300 -ErrorAction SilentlyContinue } catch {}
-      Start-Sleep -Milliseconds 600
-      for ($i = 0; $i -lt 20; $i++) {
-        try {
-          if (!(Test-Path -LiteralPath '${installDir.replace(/'/g, "''")}')) { break }
-          Remove-Item -LiteralPath '${installDir.replace(/'/g, "''")}' -Recurse -Force -ErrorAction Stop
-          break
-        } catch {
-          Start-Sleep -Seconds 1
+        } catch (e) {
+          // File might be locked by current Electron process (e.g. NyxSlate.exe, electron.dll)
         }
       }
-    `;
+    }
 
-    const child = spawn('powershell.exe', [
-      '-NoProfile',
-      '-WindowStyle', 'Hidden',
-      '-Command', psCleanup.replace(/\r?\n/g, '; ')
-    ], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true
+    try {
+      cleanDirRecursive(installDir);
+    } catch (e) { /* ignore */ }
+
+    // Step 4: Schedule background cleanup script in %TEMP% using Windows rmdir /s /q
+    uninstallerWindow.webContents.send('uninstall-progress', {
+      percent: 90,
+      status: 'Finalizing uninstallation...'
     });
-    child.unref();
+
+    const tempDir = process.env.TEMP || 'C:\\Windows\\Temp';
+    const cleanupBatPath = path.join(tempDir, `nyxslate_uninst_${Date.now()}.bat`);
+    const cleanupBatScript = `@echo off
+setlocal
+set "TARGET=${installDir.replace(/"/g, '')}"
+set "UNINSTALLER_PID=${currentPid}"
+
+:: Wait for uninstaller main process to exit
+if not "%UNINSTALLER_PID%"=="" (
+    powershell -NoProfile -Command "try { Wait-Process -Id %UNINSTALLER_PID% -Timeout 120 -ErrorAction SilentlyContinue } catch {}" >nul 2>&1
+)
+
+:: Small delay to allow OS to release all executable and DLL locks
+timeout /t 1 /nobreak >nul
+
+:: Force kill any lingering Electron child processes
+taskkill /F /IM NyxSlate.exe >nul 2>&1
+taskkill /F /IM electron.exe >nul 2>&1
+
+:: Switch working directory to TEMP so we do not hold a lock on TARGET
+cd /d "%TEMP%"
+
+:: Retry loop using Windows native rd /s /q
+for /l %%i in (1,1,30) do (
+    if not exist "%TARGET%" goto finish
+    rd /s /q "%TARGET%" >nul 2>&1
+    if not exist "%TARGET%" goto finish
+    timeout /t 1 /nobreak >nul
+)
+
+:finish
+del "%~f0" >nul 2>&1
+`;
+
+    try {
+      fs.writeFileSync(cleanupBatPath, cleanupBatScript, { encoding: 'utf8' });
+      const child = spawn('cmd.exe', ['/c', cleanupBatPath], {
+        cwd: tempDir,
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true
+      });
+      child.unref();
+    } catch (e) { /* ignore */ }
 
     uninstallerWindow.webContents.send('uninstall-progress', {
       percent: 100,
@@ -232,3 +280,4 @@ app.whenReady().then(createWindow);
 app.on('window-all-closed', () => {
   app.quit();
 });
+
