@@ -672,8 +672,11 @@
             <span class="fold-text-sr-only">NyxSlate</span>
             <span class="fold-text-visual" id="foldtext-chars"></span>
           </div>
+        <div id="update-banner" style="display: none; margin-bottom: 12px; padding: 10px 14px; border-radius: var(--radius-sm); background: rgba(234, 179, 8, 0.12); border: 1px solid rgba(234, 179, 8, 0.35); align-items: center; gap: 10px;">
+          <div style="width: 8px; height: 8px; border-radius: 50%; background: var(--accent-gold); box-shadow: 0 0 8px var(--accent-gold); flex-shrink: 0;"></div>
+          <div style="font-size: 12.5px; color: var(--text-main); line-height: 1.4;" id="update-banner-text"></div>
         </div>
-        <div class="panel-subheading" style="max-width: 460px; margin-bottom: 12px;">
+        <div class="panel-subheading" id="welcome-subheading" style="max-width: 460px; margin-bottom: 12px;">
           Fast and lightweight PDF reader with book view and markup tools.
         </div>
 
@@ -1174,12 +1177,44 @@ SOFTWARE.</div>
     requestAnimationFrame(renderLightRays);
     triggerFoldText();
 
-    // Default Install Path
+    // Check for existing installation in background
     try {
-      targetInstallPath = await window.installerAPI.getDefaultPath();
-      document.getElementById('input-install-path').value = targetInstallPath;
+      const existingInfo = await window.installerAPI.checkExisting();
+      if (existingInfo && existingInfo.isInstalled) {
+        targetInstallPath = existingInfo.installPath;
+        document.getElementById('input-install-path').value = targetInstallPath;
+
+        const banner = document.getElementById('update-banner');
+        const bannerText = document.getElementById('update-banner-text');
+        const welcomeSub = document.getElementById('welcome-subheading');
+        const btnInstall = document.getElementById('btn-install');
+
+        if (banner) banner.style.display = 'flex';
+
+        if (existingInfo.action === 'upgrade') {
+          if (bannerText) bannerText.innerHTML = `<strong>Update Detected:</strong> Version v${existingInfo.installedVersion} is installed. Setup will upgrade to v${existingInfo.installerVersion}.`;
+          if (welcomeSub) welcomeSub.textContent = `An existing installation was found. Setup will upgrade NyxSlate to v${existingInfo.installerVersion} while preserving your bookmarks and library.`;
+          if (btnInstall) btnInstall.textContent = 'Upgrade NyxSlate';
+        } else if (existingInfo.action === 'reinstall') {
+          if (bannerText) bannerText.innerHTML = `<strong>Existing Installation:</strong> Version v${existingInfo.installedVersion} is already installed at this location.`;
+          if (welcomeSub) welcomeSub.textContent = `NyxSlate is currently installed. Setup will refresh and update application files.`;
+          if (btnInstall) btnInstall.textContent = 'Reinstall / Update';
+        } else if (existingInfo.action === 'downgrade') {
+          if (bannerText) bannerText.innerHTML = `<strong>Installed:</strong> v${existingInfo.installedVersion} | <strong>Installer:</strong> v${existingInfo.installerVersion}`;
+          if (btnInstall) btnInstall.textContent = 'Reinstall';
+        }
+      } else {
+        targetInstallPath = await window.installerAPI.getDefaultPath();
+        document.getElementById('input-install-path').value = targetInstallPath;
+      }
       updateDiskSpace(targetInstallPath);
-    } catch (e) {}
+    } catch (e) {
+      try {
+        targetInstallPath = await window.installerAPI.getDefaultPath();
+        document.getElementById('input-install-path').value = targetInstallPath;
+        updateDiskSpace(targetInstallPath);
+      } catch (err) {}
+    }
   }
 
   async function updateDiskSpace(dir) {

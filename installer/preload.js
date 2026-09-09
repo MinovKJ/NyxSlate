@@ -16,5 +16,6 @@ contextBridge.exposeInMainWorld('installerAPI', {
   closeInstaller: () => ipcRenderer.send('close-installer'),
   minimizeWindow: () => ipcRenderer.send('minimize-window'),
   getDiskSpace: (dir) => ipcRenderer.invoke('get-disk-space', dir),
-  getDefaultPath: () => ipcRenderer.invoke('get-default-path')
+  getDefaultPath: () => ipcRenderer.invoke('get-default-path'),
+  checkExisting: () => ipcRenderer.invoke('check-existing')
 });

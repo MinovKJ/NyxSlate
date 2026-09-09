@@ -50,6 +50,75 @@ function getDefaultInstallPath() {
   return path.join(process.env.LOCALAPPDATA || 'C:\\Users\\Public', 'NyxSlate');
 }
 
+function checkExistingInstallation() {
+  const installerVersion = '1.0.0';
+  const defaultPath = getDefaultInstallPath();
+
+  // 1. Check Windows Registry
+  try {
+    const regQuery = execSync(
+      `powershell -NoProfile -Command "$val = Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NyxSlate' -ErrorAction SilentlyContinue; if ($val) { [PSCustomObject]@{ InstallLocation = $val.InstallLocation; DisplayVersion = $val.DisplayVersion } | ConvertTo-Json -Compress }"`
+      , { windowsHide: true, encoding: 'utf8' }
+    ).trim();
+
+    if (regQuery) {
+      const data = JSON.parse(regQuery);
+      if (data && (data.InstallLocation || data.DisplayVersion)) {
+        const installPath = data.InstallLocation && fs.existsSync(data.InstallLocation) ? data.InstallLocation : defaultPath;
+        const installedVer = data.DisplayVersion || '1.0.0';
+        return {
+          isInstalled: true,
+          installPath: installPath,
+          installedVersion: installedVer,
+          installerVersion: installerVersion,
+          action: compareVersions(installedVer, installerVersion)
+        };
+      }
+    }
+  } catch (e) {}
+
+  // 2. Check filesystem fallback (e.g. %LOCALAPPDATA%\NyxSlate)
+  if (fs.existsSync(defaultPath)) {
+    const pkgPath = path.join(defaultPath, 'package.json');
+    let installedVer = '1.0.0';
+    if (fs.existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        if (pkg.version) installedVer = pkg.version;
+      } catch (e) {}
+    }
+    return {
+      isInstalled: true,
+      installPath: defaultPath,
+      installedVersion: installedVer,
+      installerVersion: installerVersion,
+      action: compareVersions(installedVer, installerVersion)
+    };
+  }
+
+  return {
+    isInstalled: false,
+    installPath: defaultPath,
+    installedVersion: null,
+    installerVersion: installerVersion,
+    action: 'install'
+  };
+}
+
+function compareVersions(vInstalled, vNew) {
+  if (!vInstalled) return 'install';
+  if (vInstalled === vNew) return 'reinstall';
+  const parse = (v) => v.split('.').map(x => parseInt(x, 10) || 0);
+  const [iMajor, iMinor, iPatch] = parse(vInstalled);
+  const [nMajor, nMinor, nPatch] = parse(vNew);
+  if (nMajor > iMajor || (nMajor === iMajor && nMinor > iMinor) || (nMajor === iMajor && nMinor === iMinor && nPatch > iPatch)) {
+    return 'upgrade';
+  } else if (nMajor < iMajor || (nMajor === iMajor && nMinor < iMinor) || (nMajor === iMajor && nMinor === iMinor && nPatch < iPatch)) {
+    return 'downgrade';
+  }
+  return 'reinstall';
+}
+
 async function copyRecursiveAsync(src, dest, progressCb) {
   await fs.promises.mkdir(dest, { recursive: true });
   const entries = await fs.promises.readdir(src, { withFileTypes: true });
@@ -261,6 +330,10 @@ ipcMain.handle('get-disk-space', async (_event, dir) => {
   }
 });
 
+ipcMain.handle('check-existing', () => {
+  return checkExistingInstallation();
+});
+
 ipcMain.handle('start-install', async (_event, options) => {
   const {
     installPath,
@@ -274,6 +347,14 @@ ipcMain.handle('start-install', async (_event, options) => {
   const payloadDir = getPayloadDir();
 
   try {
+    // Terminate any running NyxSlate instances to prevent locked file errors during updates
+    try {
+      execSync('powershell -NoProfile -Command "Stop-Process -Name NyxSlate, electron -Force -ErrorAction SilentlyContinue"', {
+        windowsHide: true,
+        stdio: 'ignore'
+      });
+    } catch (e) {}
+
     // Count total files
     const totalFiles = countFiles(payloadDir);
     let copiedFiles = 0;
