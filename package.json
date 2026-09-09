@@ -19,7 +19,8 @@
   "author": "NyxSlate Team",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^33.4.11"
+    "electron": "^33.4.11",
+    "rcedit": "^5.0.2"
   },
   "build": {
     "appId": "com.nyxslate.pdfreader",

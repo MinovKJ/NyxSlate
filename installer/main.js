@@ -142,7 +142,8 @@ function createShortcut(shortcutPath, targetPath, args, iconPath, description) {
 // ── Register in Add/Remove Programs ──────────────────────────────────────────
 
 function registerUninstaller(installPath) {
-  const electronExe = path.join(installPath, 'node_modules', 'electron', 'dist', 'electron.exe');
+  const nyxExe = path.join(installPath, 'node_modules', 'electron', 'dist', 'NyxSlate.exe');
+  const electronExe = fs.existsSync(nyxExe) ? nyxExe : path.join(installPath, 'node_modules', 'electron', 'dist', 'electron.exe');
   const uninstallerJs = path.join(installPath, 'uninstaller-main.js');
   const iconPath = path.join(installPath, 'icon.ico');
   const payloadSize = Math.round(getDirSize(installPath) / 1024); // KB
@@ -172,7 +173,8 @@ function registerUninstaller(installPath) {
 // ── Set PDF File Association ─────────────────────────────────────────────────
 
 function setPdfAssociation(installPath) {
-  const electronExe = path.join(installPath, 'node_modules', 'electron', 'dist', 'electron.exe');
+  const nyxExe = path.join(installPath, 'node_modules', 'electron', 'dist', 'NyxSlate.exe');
+  const electronExe = fs.existsSync(nyxExe) ? nyxExe : path.join(installPath, 'node_modules', 'electron', 'dist', 'electron.exe');
   const iconPath = path.join(installPath, 'icon.ico');
   const openCommand = `"${electronExe}" "${installPath}" "%1"`;
 
@@ -185,26 +187,35 @@ function setPdfAssociation(installPath) {
     } catch (e) { /* ignore */ }
   }
 
+  function regDel(key) {
+    try {
+      execSync(`reg.exe delete "${key}" /f`, { windowsHide: true, stdio: 'ignore' });
+    } catch (e) { /* ignore */ }
+  }
+
   try {
     // 1. Classes .pdf
     regAdd('HKCU\\Software\\Classes\\.pdf', '', 'NyxSlate.PDF');
     regAdd('HKCU\\Software\\Classes\\.pdf\\OpenWithProgids', 'NyxSlate.PDF', '');
-    regAdd('HKCU\\Software\\Classes\\.pdf\\OpenWithList\\electron.exe', '', '');
+    regAdd('HKCU\\Software\\Classes\\.pdf\\OpenWithList\\NyxSlate.exe', '', '');
 
     // 2. Classes NyxSlate.PDF
     regAdd('HKCU\\Software\\Classes\\NyxSlate.PDF', '', 'NyxSlate PDF Document');
     regAdd('HKCU\\Software\\Classes\\NyxSlate.PDF', 'FriendlyTypeName', 'NyxSlate PDF Document');
-    regAdd('HKCU\\Software\\Classes\\NyxSlate.PDF\\DefaultIcon', '', iconPath);
+    regAdd('HKCU\\Software\\Classes\\NyxSlate.PDF\\DefaultIcon', '', `${electronExe},0`);
     regAdd('HKCU\\Software\\Classes\\NyxSlate.PDF\\shell\\open', 'FriendlyAppName', 'NyxSlate');
     regAdd('HKCU\\Software\\Classes\\NyxSlate.PDF\\shell\\open\\command', '', openCommand);
 
-    // 3. Applications\\electron.exe (Ensures Windows shows "NyxSlate" instead of "Electron")
-    regAdd('HKCU\\Software\\Classes\\Applications\\electron.exe', 'FriendlyAppName', 'NyxSlate');
-    regAdd('HKCU\\Software\\Classes\\Applications\\electron.exe', 'ApplicationCompany', 'NyxSlate');
-    regAdd('HKCU\\Software\\Classes\\Applications\\electron.exe\\DefaultIcon', '', iconPath);
-    regAdd('HKCU\\Software\\Classes\\Applications\\electron.exe\\SupportedTypes', '.pdf', '');
-    regAdd('HKCU\\Software\\Classes\\Applications\\electron.exe\\shell\\open', 'FriendlyAppName', 'NyxSlate');
-    regAdd('HKCU\\Software\\Classes\\Applications\\electron.exe\\shell\\open\\command', '', openCommand);
+    // 3. Applications\\NyxSlate.exe (Windows extracts the embedded gold/dark icon directly from NyxSlate.exe)
+    regAdd('HKCU\\Software\\Classes\\Applications\\NyxSlate.exe', 'FriendlyAppName', 'NyxSlate');
+    regAdd('HKCU\\Software\\Classes\\Applications\\NyxSlate.exe', 'ApplicationCompany', 'NyxSlate');
+    regAdd('HKCU\\Software\\Classes\\Applications\\NyxSlate.exe\\DefaultIcon', '', `${electronExe},0`);
+    regAdd('HKCU\\Software\\Classes\\Applications\\NyxSlate.exe\\SupportedTypes', '.pdf', '');
+    regAdd('HKCU\\Software\\Classes\\Applications\\NyxSlate.exe\\shell\\open', 'FriendlyAppName', 'NyxSlate');
+    regAdd('HKCU\\Software\\Classes\\Applications\\NyxSlate.exe\\shell\\open\\command', '', openCommand);
+
+    // Clean old electron.exe app registration so Windows doesn't show old Atom icon
+    regDel('HKCU\\Software\\Classes\\Applications\\electron.exe');
 
     // 4. RegisteredApplications & Capabilities
     regAdd('HKCU\\Software\\RegisteredApplications', 'NyxSlate', 'Software\\NyxSlate\\Capabilities');
@@ -214,7 +225,7 @@ function setPdfAssociation(installPath) {
 
     // 5. Explorer FileExts
     regAdd('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\OpenWithProgids', 'NyxSlate.PDF', '', 'REG_NONE');
-    regAdd('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\OpenWithList', 'a', 'electron.exe');
+    regAdd('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\OpenWithList', 'a', 'NyxSlate.exe');
     regAdd('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\OpenWithList', 'MRUList', 'a');
 
     // 6. App Paths
@@ -372,7 +383,8 @@ pause
       status: 'Creating shortcuts...'
     });
 
-    const electronExe = path.join(installPath, 'node_modules', 'electron', 'dist', 'electron.exe');
+    const nyxExe = path.join(installPath, 'node_modules', 'electron', 'dist', 'NyxSlate.exe');
+    const electronExe = fs.existsSync(nyxExe) ? nyxExe : path.join(installPath, 'node_modules', 'electron', 'dist', 'electron.exe');
     const iconFile = path.join(installPath, 'icon.ico');
     const launchTarget = fs.existsSync(electronExe) ? electronExe : path.join(installPath, 'Launch NyxSlate.bat');
     const launchArgs = fs.existsSync(electronExe) ? `"${installPath}"` : '';

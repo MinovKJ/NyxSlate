@@ -58,29 +58,41 @@ foreach ($file in $filesToCopy) {
     }
 }
 
-# Copy node_modules (needed for Electron runtime)
-Write-Host "[4/4] Copying Electron runtime (node_modules)..." -ForegroundColor Yellow
-$nodeModulesSrc = Join-Path $projectDir "node_modules"
-$nodeModulesDst = Join-Path $payloadDir "node_modules"
+    # Copy node_modules (needed for Electron runtime)
+    Write-Host "[4/4] Copying Electron runtime (node_modules)..." -ForegroundColor Yellow
+    $nodeModulesSrc = Join-Path $projectDir "node_modules"
+    $nodeModulesDst = Join-Path $payloadDir "node_modules"
 
-if (Test-Path $nodeModulesSrc) {
-    # Only copy electron and its dependencies (not all dev deps)
-    $electronDir = Join-Path $nodeModulesSrc "electron"
-    if (Test-Path $electronDir) {
-        $electronDst = Join-Path $nodeModulesDst "electron"
-        New-Item -ItemType Directory -Path $nodeModulesDst -Force | Out-Null
-        Copy-Item $electronDir -Destination $electronDst -Recurse -Force
-        Write-Host "  + node_modules/electron" -ForegroundColor Green
-    }
+    if (Test-Path $nodeModulesSrc) {
+        # Only copy electron and its dependencies (not all dev deps)
+        $electronDir = Join-Path $nodeModulesSrc "electron"
+        if (Test-Path $electronDir) {
+            $electronDst = Join-Path $nodeModulesDst "electron"
+            New-Item -ItemType Directory -Path $nodeModulesDst -Force | Out-Null
+            Copy-Item $electronDir -Destination $electronDst -Recurse -Force
+            Write-Host "  + node_modules/electron" -ForegroundColor Green
 
-    # Copy pdf-lib if it exists in node_modules
-    $pdfLibDir = Join-Path $nodeModulesSrc "pdf-lib"
-    if (Test-Path $pdfLibDir) {
-        $pdfLibDst = Join-Path $nodeModulesDst "pdf-lib"
-        Copy-Item $pdfLibDir -Destination $pdfLibDst -Recurse -Force
-        Write-Host "  + node_modules/pdf-lib" -ForegroundColor Green
+            # Create NyxSlate.exe with embedded icon & metadata
+            $electronExe = Join-Path $electronDst "dist\electron.exe"
+            $nyxExe = Join-Path $electronDst "dist\NyxSlate.exe"
+            $iconFile = Join-Path $projectDir "icon.ico"
+            $rceditExe = Join-Path $projectDir "node_modules\rcedit\bin\rcedit-x64.exe"
+
+            if ((Test-Path $electronExe) -and (Test-Path $iconFile) -and (Test-Path $rceditExe)) {
+                Copy-Item $electronExe $nyxExe -Force
+                & $rceditExe $nyxExe --set-icon $iconFile --set-version-string ProductName "NyxSlate" --set-version-string FileDescription "NyxSlate" --set-version-string CompanyName "NyxSlate" --set-version-string LegalCopyright "Copyright (C) 2026 NyxSlate" --set-file-version 1.0.0 --set-product-version 1.0.0
+                Write-Host "  + Created NyxSlate.exe with custom embedded icon" -ForegroundColor Green
+            }
+        }
+
+        # Copy pdf-lib if it exists in node_modules
+        $pdfLibDir = Join-Path $nodeModulesSrc "pdf-lib"
+        if (Test-Path $pdfLibDir) {
+            $pdfLibDst = Join-Path $nodeModulesDst "pdf-lib"
+            Copy-Item $pdfLibDir -Destination $pdfLibDst -Recurse -Force
+            Write-Host "  + node_modules/pdf-lib" -ForegroundColor Green
+        }
     }
-}
 else {
     Write-Host "  WARNING: node_modules not found! Run npm install in the project root first." -ForegroundColor Red
 }
