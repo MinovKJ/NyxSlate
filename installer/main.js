@@ -346,15 +346,16 @@ ipcMain.handle('start-install', async (_event, options) => {
   installDir = installPath;
   const payloadDir = getPayloadDir();
 
-  try {
-    // Terminate other running NyxSlate instances (excluding this installer process) to prevent locked file errors during updates
-    try {
-      const myPid = process.pid;
-      execSync(`powershell -NoProfile -Command "Get-Process -Name NyxSlate, electron -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne ${myPid} } | Stop-Process -Force -ErrorAction SilentlyContinue"`, {
-        windowsHide: true,
-        stdio: 'ignore'
-      });
-    } catch (e) {}
+    // Close any previous app instance running strictly from the target install path
+    if (fs.existsSync(installPath)) {
+      try {
+        const escPath = installPath.replace(/'/g, "''");
+        execSync(`powershell -NoProfile -Command "Get-Process -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -like '${escPath}*' } catch { $false } } | Stop-Process -Force -ErrorAction SilentlyContinue"`, {
+          windowsHide: true,
+          stdio: 'ignore'
+        });
+      } catch (e) {}
+    }
 
     // Count total files
     const totalFiles = countFiles(payloadDir);
