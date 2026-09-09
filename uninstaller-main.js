@@ -96,17 +96,9 @@ ipcMain.handle('start-uninstall', async () => {
   try {
     const currentPid = process.pid;
 
-    // Step 0: Terminate any running NyxSlate application instances (other than this uninstaller)
-    try {
-      execSync(`powershell -NoProfile -Command "Get-Process -Name NyxSlate, electron -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne ${currentPid} } | Stop-Process -Force -ErrorAction SilentlyContinue"`, {
-        windowsHide: true,
-        stdio: 'ignore'
-      });
-    } catch (e) { /* ignore */ }
-
     // Step 1: Remove shortcuts silently using native node fs
     uninstallerWindow.webContents.send('uninstall-progress', {
-      percent: 15,
+      percent: 20,
       status: 'Removing shortcuts...'
     });
 
@@ -133,7 +125,7 @@ ipcMain.handle('start-uninstall', async () => {
 
     // Step 2: Remove registry entries silently in ONE hidden PowerShell call
     uninstallerWindow.webContents.send('uninstall-progress', {
-      percent: 40,
+      percent: 50,
       status: 'Cleaning registry entries...'
     });
 
@@ -170,92 +162,64 @@ ipcMain.handle('start-uninstall', async () => {
       });
     } catch (e) { /* ignore */ }
 
-    // Step 3: Remove application files immediately (delete all non-locked files)
+    // Step 3: Remove user application files (leaving runtime untouched until window close)
     uninstallerWindow.webContents.send('uninstall-progress', {
-      percent: 70,
+      percent: 75,
       status: 'Removing application files...'
     });
 
-    function cleanDirRecursive(dir) {
-      if (!fs.existsSync(dir)) return;
-      let entries = [];
-      try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
-      } catch (e) { return; }
-
+    try {
+      const entries = fs.readdirSync(installDir);
       for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-        // Do not delete uninstaller scripts while actively executing
-        if (dir === installDir && (entry.name === 'uninstaller-main.js' || entry.name === 'uninstaller.html' || entry.name === 'uninstaller-preload.js')) {
+        // Keep runtime files and uninstaller assets alive so the UI never crashes
+        if (entry === 'node_modules' || entry === 'uninstaller-main.js' || entry === 'uninstaller.html' || entry === 'uninstaller-preload.js') {
           continue;
         }
+        const fullPath = path.join(installDir, entry);
         try {
-          if (entry.isDirectory()) {
-            cleanDirRecursive(fullPath);
-            try { fs.rmdirSync(fullPath); } catch (e) {}
+          if (fs.statSync(fullPath).isDirectory()) {
+            fs.rmSync(fullPath, { recursive: true, force: true });
           } else {
             fs.unlinkSync(fullPath);
           }
-        } catch (e) {
-          // File might be locked by current Electron process (e.g. NyxSlate.exe, electron.dll)
-        }
+        } catch (e) {}
       }
-    }
+    } catch (e) {}
 
-    try {
-      cleanDirRecursive(installDir);
-    } catch (e) { /* ignore */ }
-
-    // Step 4: Schedule background cleanup script in %TEMP% using Windows rmdir /s /q
+    // Step 4: Schedule 100% hidden background cleanup that wipes the remaining directory once this uninstaller process exits
     uninstallerWindow.webContents.send('uninstall-progress', {
       percent: 90,
       status: 'Finalizing uninstallation...'
     });
 
-    const tempDir = process.env.TEMP || 'C:\\Windows\\Temp';
-    const cleanupBatPath = path.join(tempDir, `nyxslate_uninst_${Date.now()}.bat`);
-    const cleanupBatScript = `@echo off
-setlocal
-set "TARGET=${installDir.replace(/"/g, '')}"
-set "UNINSTALLER_PID=${currentPid}"
+    const psCleanup = `
+      $p = ${currentPid}
+      try { Wait-Process -Id $p -Timeout 300 -ErrorAction SilentlyContinue } catch {}
+      Start-Sleep -Milliseconds 600
+      $target = '${installDir.replace(/'/g, "''")}'
+      for ($i = 0; $i -lt 30; $i++) {
+        if (!(Test-Path -LiteralPath $target)) { break }
+        try {
+          [System.IO.Directory]::Delete($target, $true)
+          break
+        } catch {
+          try { & cmd.exe /c "rd /s /q `"$target`"" *>$null } catch {}
+          Start-Sleep -Seconds 1
+        }
+      }
+    `;
 
-:: Wait for uninstaller main process to exit
-if not "%UNINSTALLER_PID%"=="" (
-    powershell -NoProfile -Command "try { Wait-Process -Id %UNINSTALLER_PID% -Timeout 120 -ErrorAction SilentlyContinue } catch {}" >nul 2>&1
-)
-
-:: Small delay to allow OS to release all executable and DLL locks
-timeout /t 1 /nobreak >nul
-
-:: Force kill any lingering Electron child processes
-taskkill /F /IM NyxSlate.exe >nul 2>&1
-taskkill /F /IM electron.exe >nul 2>&1
-
-:: Switch working directory to TEMP so we do not hold a lock on TARGET
-cd /d "%TEMP%"
-
-:: Retry loop using Windows native rd /s /q
-for /l %%i in (1,1,30) do (
-    if not exist "%TARGET%" goto finish
-    rd /s /q "%TARGET%" >nul 2>&1
-    if not exist "%TARGET%" goto finish
-    timeout /t 1 /nobreak >nul
-)
-
-:finish
-del "%~f0" >nul 2>&1
-`;
-
-    try {
-      fs.writeFileSync(cleanupBatPath, cleanupBatScript, { encoding: 'utf8' });
-      const child = spawn('cmd.exe', ['/c', cleanupBatPath], {
-        cwd: tempDir,
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true
-      });
-      child.unref();
-    } catch (e) { /* ignore */ }
+    const child = spawn('powershell.exe', [
+      '-NoProfile',
+      '-WindowStyle', 'Hidden',
+      '-Command', psCleanup.replace(/\r?\n/g, '; ')
+    ], {
+      cwd: process.env.TEMP || 'C:\\Windows\\Temp',
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true
+    });
+    child.unref();
 
     uninstallerWindow.webContents.send('uninstall-progress', {
       percent: 100,
