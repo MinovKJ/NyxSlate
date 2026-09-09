@@ -2468,6 +2468,7 @@
 <script>
 // ─── App Views & Floating Menubar System ───────────────────────────────────
 let currentView = 'home'; // 'home', 'files', 'doc'
+let originView = 'home'; // Tracks screen from which PDF was opened ('home' or 'files')
 let filesSearchQuery = '';
 let filesSortOrder = 'recent';
 let filesViewMode = 'grid'; // 'grid' or 'list'
@@ -2476,6 +2477,7 @@ let isMenubarActive = false;
 let menubarCloseTimeout = null;
 
 function goHome() {
+  originView = 'home';
   currentView = 'home';
   document.body.classList.remove('files-view-active');
   document.getElementById('menu-btn-home')?.classList.add('active');
@@ -2493,6 +2495,7 @@ function goHome() {
 }
 
 function openFilesHub() {
+  originView = 'files';
   currentView = 'files';
   document.body.classList.add('files-view-active');
   document.getElementById('menu-btn-home')?.classList.remove('active');
@@ -4679,6 +4682,9 @@ async function openPDF(data) {
   dzone.classList.add('gone');
   document.body.classList.add('doc-loaded');
   document.body.classList.remove('files-view-active');
+  if (currentView !== 'doc') {
+    originView = (currentView === 'files') ? 'files' : 'home';
+  }
   currentView = 'doc';
   const filesHubEl = document.getElementById('files-hub');
   if (filesHubEl) filesHubEl.style.display = 'none';
@@ -5431,6 +5437,12 @@ function closePDF() {
   PDFStorage.clearDocMemory();
 
   toast('Document closed', 'info');
+
+  if (originView === 'files') {
+    openFilesHub();
+  } else {
+    goHome();
+  }
 }
 
 function buildSidebar() {
@@ -6014,31 +6026,40 @@ const RecentFileManager = (function() {
       const req = store.get(id);
       req.onsuccess = async () => {
         const item = req.result;
-        if (!item || !item.data) {
-          toast('PDF data not available for clipboard copy', 'warning');
+        if (!item) {
+          toast('PDF data not found', 'warning');
           return;
         }
 
-        const blob = new Blob([item.data], { type: 'application/pdf' });
-
-        // Attempt 1: Copy binary PDF Blob directly to Clipboard
-        if (navigator.clipboard && window.ClipboardItem) {
+        // 1. Electron Native Windows File Clipboard Copy (Copies genuine .pdf file to clipboard)
+        if (window.electronAPI && window.electronAPI.copyFileToClipboard) {
           try {
-            await navigator.clipboard.write([
-              new ClipboardItem({
-                'application/pdf': blob
-              })
-            ]);
-            toast(`Copied "${item.name}" PDF directly to clipboard!`, 'check');
-            return;
+            let dataArray = null;
+            if (item.data) {
+              dataArray = (item.data instanceof Uint8Array)
+                ? Array.from(item.data)
+                : (item.data instanceof ArrayBuffer)
+                  ? Array.from(new Uint8Array(item.data))
+                  : Array.from(new Uint8Array(item.data.buffer || item.data));
+            }
+            const res = await window.electronAPI.copyFileToClipboard({
+              name: item.name,
+              data: dataArray,
+              filePath: item.path || null
+            });
+            if (res && res.success) {
+              toast(`Copied "${item.name}" file to clipboard! (Ready to paste in File Explorer, Chat, or Email)`, 'check');
+              return;
+            }
           } catch (clipErr) {
-            console.log('ClipboardItem PDF write attempt failed, trying fallback...', clipErr);
+            console.warn('Native clipboard copy error:', clipErr);
           }
         }
 
-        // Attempt 2: Web Share API with File
-        if (navigator.share) {
+        // 2. Web Share API with File
+        if (item.data && navigator.share) {
           try {
+            const blob = new Blob([item.data], { type: 'application/pdf' });
             const file = new File([blob], item.name, { type: 'application/pdf' });
             await navigator.share({
               title: item.name,
@@ -6050,12 +6071,11 @@ const RecentFileManager = (function() {
           } catch (shareErr) {}
         }
 
-        // Attempt 3: Copy text & trigger download link
+        // 3. Fallback: Copy name
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          const shareText = `NyxSlate PDF Document: ${item.name} (${item.pageCount || 1} pages, ${formatFileSize(item.size)})`;
-          await navigator.clipboard.writeText(shareText);
+          await navigator.clipboard.writeText(item.name);
+          toast(`Copied "${item.name}"`, 'check');
         }
-        toast(`Copied info for "${item.name}"`, 'check');
       };
     } catch (e) {
       toast('Failed to share document: ' + e.message, 'warning');
@@ -7444,9 +7464,7 @@ function resetUserIdentity() {
 
   if (storedName && storedName.trim()) {
     storedName = storedName.trim();
-    if (sbNameEl) sbNameEl.textContent = storedName;
-    if (sbUserNameEl) sbUserNameEl.textContent = storedName;
-    if (sbUserModeEl) sbUserModeEl.textContent = storedName.toLowerCase().replace(/\s+/g, '') + '@example.com';
+    updateProfileUI(storedName, storedName.toLowerCase().replace(/\s+/g, '') + '@example.com');
     nameScreen.classList.add('gone');
     startAppIntro(storedName, true);
     checkStoredPDF();
@@ -7499,13 +7517,7 @@ function resetUserIdentity() {
 
     const displayName = rawInput;
     localStorage.setItem(NAME_STORAGE_KEY, displayName);
-
-    if (sbUserNameEl) {
-      sbUserNameEl.textContent = displayName;
-    }
-    if (sbUserModeEl) {
-      sbUserModeEl.textContent = displayName.toLowerCase().replace(/\s+/g, '') + '@example.com';
-    }
+    updateProfileUI(displayName, displayName.toLowerCase().replace(/\s+/g, '') + '@example.com');
 
     // Replace input with bare animated name display
     const wrap = document.getElementById('ns-input-wrap');
@@ -7549,7 +7561,7 @@ function startAppIntro(userName, isReturning) {
   const sub       = document.getElementById('intro-sub');
 
   const TEXTS = isReturning
-    ? [`Welcome back, ${userName}.`, 'Your documents await.']
+    ? [`Welcome back, ${userName}.`]
     : [`Welcome to NyxSlate, ${userName}.`, 'Your documents await.'];
 
   container.innerHTML = '';
@@ -7567,7 +7579,7 @@ function startAppIntro(userName, isReturning) {
     setTimeout(() => introEl.classList.add('gone'), 700);
     setTimeout(() => {
       const greeting = isReturning ? `Welcome back, ${userName}!` : `Welcome, ${userName}!`;
-      toast(`${greeting} Drop a PDF to begin.`, 'info');
+      toast(greeting, 'info');
     }, 750);
   }
 

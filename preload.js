@@ -17,5 +17,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPowerState: () => ipcRenderer.invoke('get-power-state'),
   onPowerStateChanged: (callback) => {
     ipcRenderer.on('power-state-changed', (_event, data) => callback(data));
-  }
+  },
+  copyFileToClipboard: (fileInfo) => ipcRenderer.invoke('copy-file-to-clipboard', fileInfo)
 });

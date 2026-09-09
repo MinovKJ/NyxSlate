@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { execSync } = require('child_process');
 
 // Suppress EPIPE errors — prevents crash when launched from installer
 // or any context where stdout/stderr pipe is closed early.
@@ -154,6 +155,31 @@ ipcMain.handle('get-power-state', () => {
   } catch (e) {
     return { onBattery: false, targetFps: 144 };
   }
+});
+
+// Native Windows File Clipboard Copy (Copies genuine .pdf file to Windows clipboard)
+ipcMain.handle('copy-file-to-clipboard', async (_event, { name, data, filePath }) => {
+  try {
+    let targetPath = filePath;
+    if (!targetPath || !fs.existsSync(targetPath)) {
+      const shareDir = path.join(app.getPath('temp'), 'NyxSlate_Share');
+      if (!fs.existsSync(shareDir)) fs.mkdirSync(shareDir, { recursive: true });
+      targetPath = path.join(shareDir, name || 'document.pdf');
+      if (data && Array.isArray(data)) {
+        fs.writeFileSync(targetPath, Buffer.from(data));
+      }
+    }
+
+    if (targetPath && fs.existsSync(targetPath)) {
+      const escaped = targetPath.replace(/'/g, "''");
+      execSync(`powershell -NoProfile -Command "Set-Clipboard -Path '${escaped}'"`, { windowsHide: true });
+      return { success: true, path: targetPath };
+    }
+  } catch (err) {
+    console.error('Failed to copy file to clipboard:', err);
+    return { success: false, error: err.message };
+  }
+  return { success: false };
 });
 
 app.whenReady().then(() => {
