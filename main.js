@@ -8,10 +8,56 @@ const { execSync } = require('child_process');
 process.stdout?.on?.('error', (err) => { if (err.code !== 'EPIPE') throw err; });
 process.stderr?.on?.('error', (err) => { if (err.code !== 'EPIPE') throw err; });
 
+// Fixed App Name and UserData directory for 100% persistent cross-instance storage
+app.name = 'NyxSlate';
+const userDataPath = path.join(app.getPath('appData'), 'NyxSlate');
+app.setPath('userData', userDataPath);
+
+const configFilePath = path.join(userDataPath, 'nyx_config.json');
+const recentFilesPath = path.join(userDataPath, 'recent_files.json');
+const cachedDocsDir = path.join(userDataPath, 'cached_docs');
+
+try {
+  if (!fs.existsSync(userDataPath)) fs.mkdirSync(userDataPath, { recursive: true });
+  if (!fs.existsSync(cachedDocsDir)) fs.mkdirSync(cachedDocsDir, { recursive: true });
+} catch (e) {}
+
+function readConfig() {
+  try {
+    if (fs.existsSync(configFilePath)) {
+      return JSON.parse(fs.readFileSync(configFilePath, 'utf8'));
+    }
+  } catch (e) {}
+  return {};
+}
+
+function writeConfig(cfg) {
+  try {
+    if (!fs.existsSync(userDataPath)) fs.mkdirSync(userDataPath, { recursive: true });
+    fs.writeFileSync(configFilePath, JSON.stringify(cfg, null, 2), 'utf8');
+  } catch (e) {}
+}
+
+function readRecentFiles() {
+  try {
+    if (fs.existsSync(recentFilesPath)) {
+      return JSON.parse(fs.readFileSync(recentFilesPath, 'utf8'));
+    }
+  } catch (e) {}
+  return [];
+}
+
+function writeRecentFiles(files) {
+  try {
+    if (!fs.existsSync(userDataPath)) fs.mkdirSync(userDataPath, { recursive: true });
+    fs.writeFileSync(recentFilesPath, JSON.stringify(files, null, 2), 'utf8');
+  } catch (e) {}
+}
+
 let mainWindow = null;
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     width: 1360,
     height: 860,
     minWidth: 900,
@@ -31,25 +77,27 @@ function createWindow() {
     }
   });
 
-  mainWindow.setFullScreen(true);
+  if (!mainWindow) mainWindow = win;
+
+  win.setFullScreen(true);
 
   // Prevent Escape from exiting fullscreen mode
-  mainWindow.webContents.on('before-input-event', (event, input) => {
+  win.webContents.on('before-input-event', (event, input) => {
     if (input.key === 'Escape') {
-      if (mainWindow && mainWindow.isFullScreen()) {
+      if (win && win.isFullScreen()) {
         event.preventDefault();
-        mainWindow.webContents.send('escape-pressed');
+        win.webContents.send('escape-pressed');
       }
     }
   });
 
-  mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  win.loadFile(path.join(__dirname, 'index.html'));
 
-  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+  win.webContents.on('console-message', (event, level, message, line, sourceId) => {
     console.log(`[Renderer Line ${line}]`, message);
   });
 
-  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+  win.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
     console.error('did-fail-load:', errorCode, errorDescription);
   });
 
@@ -57,11 +105,11 @@ function createWindow() {
   const args = process.argv.slice(app.isPackaged ? 1 : 2);
   const pdfArg = args.find(a => a && a.toLowerCase().endsWith('.pdf') && fs.existsSync(a));
 
-  mainWindow.webContents.on('did-finish-load', () => {
+  win.webContents.on('did-finish-load', () => {
     if (pdfArg) {
       try {
         const fileData = fs.readFileSync(pdfArg);
-        mainWindow.webContents.send('open-file-from-cli', {
+        win.webContents.send('open-file-from-cli', {
           name: path.basename(pdfArg),
           path: pdfArg,
           data: Array.from(fileData)
@@ -72,40 +120,48 @@ function createWindow() {
     }
   });
 
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+  win.on('closed', () => {
+    if (mainWindow === win) {
+      mainWindow = null;
+    }
   });
+
+  return win;
 }
 
 // Window controls IPC
-ipcMain.on('window-minimize', () => {
-  if (mainWindow) mainWindow.minimize();
+ipcMain.on('window-minimize', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+  if (win) win.minimize();
 });
 
-ipcMain.on('window-maximize', () => {
-  if (mainWindow) {
-    if (mainWindow.isMaximized()) {
-      mainWindow.unmaximize();
+ipcMain.on('window-maximize', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+  if (win) {
+    if (win.isMaximized()) {
+      win.unmaximize();
     } else {
-      mainWindow.maximize();
+      win.maximize();
     }
   }
 });
 
-ipcMain.on('window-close', () => {
-  if (mainWindow) mainWindow.close();
+ipcMain.on('window-close', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+  if (win) win.close();
 });
 
-ipcMain.on('window-toggle-fullscreen', () => {
-  if (mainWindow) {
-    mainWindow.setFullScreen(!mainWindow.isFullScreen());
+ipcMain.on('window-toggle-fullscreen', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+  if (win) {
+    win.setFullScreen(!win.isFullScreen());
   }
 });
 
 // File dialog IPC
-ipcMain.handle('dialog-open-file', async () => {
-  if (!mainWindow) return null;
-  const result = await dialog.showOpenDialog(mainWindow, {
+ipcMain.handle('dialog-open-file', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+  const result = await dialog.showOpenDialog(win, {
     title: 'Select PDF Document',
     filters: [
       { name: 'PDF Documents', extensions: ['pdf'] }
@@ -131,6 +187,36 @@ ipcMain.handle('dialog-open-file', async () => {
   }
 });
 
+// Save PDF Dialog IPC (Asks user where to save the created PDF)
+ipcMain.handle('dialog-save-file', async (event, { defaultName, data }) => {
+  const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+  const result = await dialog.showSaveDialog(win, {
+    title: 'Save PDF Document',
+    defaultPath: defaultName || 'Compiled_Images.pdf',
+    filters: [
+      { name: 'PDF Documents', extensions: ['pdf'] }
+    ]
+  });
+
+  if (result.canceled || !result.filePath) {
+    return null;
+  }
+
+  try {
+    const filePath = result.filePath;
+    const buffer = Buffer.from(data);
+    fs.writeFileSync(filePath, buffer);
+    return {
+      success: true,
+      filePath,
+      name: path.basename(filePath)
+    };
+  } catch (err) {
+    console.error('Error saving file to disk:', err);
+    return { success: false, error: err.message };
+  }
+});
+
 ipcMain.handle('file-read', async (_event, filePath) => {
   try {
     if (fs.existsSync(filePath)) {
@@ -145,6 +231,87 @@ ipcMain.handle('file-read', async (_event, filePath) => {
     console.error('Error reading file by path:', err);
   }
   return null;
+});
+
+// Persistent Config Storage (Cross-instance & cross-window persistent profile)
+ipcMain.handle('store-get', (_event, key) => {
+  const cfg = readConfig();
+  return cfg[key] !== undefined ? cfg[key] : null;
+});
+
+ipcMain.handle('store-set', (_event, key, val) => {
+  const cfg = readConfig();
+  cfg[key] = val;
+  writeConfig(cfg);
+  return true;
+});
+
+// Persistent Recent Files Storage & Disk Cache
+ipcMain.handle('recent-get-all', () => {
+  return readRecentFiles();
+});
+
+ipcMain.handle('recent-save', async (_event, item) => {
+  try {
+    const list = readRecentFiles();
+    let docPath = item.path || '';
+
+    if (item.data && (Array.isArray(item.data) || item.data instanceof Uint8Array || Buffer.isBuffer(item.data))) {
+      const safeName = (item.name || 'document.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+      const docFile = path.join(cachedDocsDir, `${item.id}_${safeName}`);
+      fs.writeFileSync(docFile, Buffer.from(item.data));
+      docPath = docFile;
+    }
+
+    const record = {
+      id: item.id,
+      name: item.name,
+      size: item.size,
+      pageCount: item.pageCount,
+      lastOpened: item.lastOpened || Date.now(),
+      starred: !!item.starred,
+      path: docPath
+    };
+
+    const filtered = list.filter(x => x.id !== item.id && x.name !== item.name);
+    filtered.unshift(record);
+    if (filtered.length > 50) {
+      const removed = filtered.pop();
+      if (removed.path && removed.path.startsWith(cachedDocsDir) && fs.existsSync(removed.path)) {
+        try { fs.unlinkSync(removed.path); } catch (e) {}
+      }
+    }
+    writeRecentFiles(filtered);
+    return true;
+  } catch (err) {
+    console.error('Failed to save recent file in main process:', err);
+    return false;
+  }
+});
+
+ipcMain.handle('recent-delete', (_event, id) => {
+  try {
+    const list = readRecentFiles();
+    const target = list.find(x => x.id === id);
+    if (target && target.path && target.path.startsWith(cachedDocsDir) && fs.existsSync(target.path)) {
+      try { fs.unlinkSync(target.path); } catch (e) {}
+    }
+    const filtered = list.filter(x => x.id !== id);
+    writeRecentFiles(filtered);
+    return true;
+  } catch (e) {
+    return false;
+  }
+});
+
+ipcMain.handle('recent-star', (_event, id) => {
+  const list = readRecentFiles();
+  const item = list.find(x => x.id === id);
+  if (item) {
+    item.starred = !item.starred;
+    writeRecentFiles(list);
+  }
+  return true;
 });
 
 // Battery vs AC power detection (60 FPS on Battery, 144 FPS when plugged in)
@@ -187,10 +354,14 @@ app.whenReady().then(() => {
 
   if (powerMonitor) {
     powerMonitor.on('on-battery', () => {
-      mainWindow?.webContents?.send('power-state-changed', { onBattery: true, targetFps: 60 });
+      BrowserWindow.getAllWindows().forEach(w => {
+        w.webContents.send('power-state-changed', { onBattery: true, targetFps: 60 });
+      });
     });
     powerMonitor.on('on-ac', () => {
-      mainWindow?.webContents?.send('power-state-changed', { onBattery: false, targetFps: 144 });
+      BrowserWindow.getAllWindows().forEach(w => {
+        w.webContents.send('power-state-changed', { onBattery: false, targetFps: 144 });
+      });
     });
   }
 

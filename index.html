@@ -5073,7 +5073,7 @@ function loadFile(file) {
     fname  = file.name;
     fbytes = new Uint8Array(e.target.result);
     try {
-      await openPDF(fbytes);
+      await openPDF(fbytes, file.path || null);
     } catch(err) {
       toast('Failed to load PDF: '+err.message, 'error');
       console.error(err);
@@ -5083,7 +5083,7 @@ function loadFile(file) {
   reader.readAsArrayBuffer(file);
 }
 
-async function openPDF(data) {
+async function openPDF(data, sourceFilePath = null) {
   if (window._stopDropZone) window._stopDropZone();
 
   // Clone buffer BEFORE passing to PDF.js worker so it is not detached
@@ -5123,7 +5123,7 @@ async function openPDF(data) {
 
   // Save to persistent recent files storage
   if (recentBuffer) {
-    RecentFileManager.addRecentFile(fname, recentBuffer, totPages);
+    RecentFileManager.addRecentFile(fname, recentBuffer, totPages, sourceFilePath);
   }
 
   // Only show Book Mode option in View menu if document has more than 1 page
@@ -6589,9 +6589,29 @@ const ImageToPdfEngine = (function() {
       closeModal();
       clearQueue();
 
+      let savedFilePath = null;
+      if (window.electronAPI && window.electronAPI.saveFileDialog) {
+        toast('Choose where to save your PDF...', 'info');
+        const saveRes = await window.electronAPI.saveFileDialog({
+          defaultName: docTitle,
+          data: Array.from(pdfBytes)
+        });
+
+        if (saveRes && saveRes.filePath) {
+          savedFilePath = saveRes.filePath;
+          if (saveRes.name) docTitle = saveRes.name;
+          toast(`Saved PDF to "${docTitle}"`, 'check');
+        } else if (saveRes === null) {
+          toast('Save cancelled by user', 'info');
+          return;
+        }
+      }
+
       fname = docTitle;
       await openPDF(pdfBytes);
-      toast(`Successfully created "${docTitle}"`, 'check');
+      if (!savedFilePath) {
+        toast(`Successfully created "${docTitle}"`, 'check');
+      }
     } catch (err) {
       console.error('Error creating PDF from images:', err);
       toast('Failed to compile PDF: ' + (err.message || err), 'warning');
@@ -6649,9 +6669,20 @@ const RecentFileManager = (function() {
     return dbPromise;
   }
 
-  async function addRecentFile(name, bytes, pageCount) {
+  async function addRecentFile(name, bytes, pageCount, filePath) {
     if (!name || !bytes) return;
     try {
+      let rawBuf;
+      if (bytes instanceof ArrayBuffer) {
+        rawBuf = bytes.slice(0);
+      } else if (bytes.buffer instanceof ArrayBuffer) {
+        rawBuf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      } else {
+        rawBuf = bytes;
+      }
+      const rawBytesArr = Array.from(new Uint8Array(rawBuf));
+      const recordId = Date.now();
+
       const db = await openDB();
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
@@ -6660,24 +6691,32 @@ const RecentFileManager = (function() {
       getAllReq.onsuccess = () => {
         const items = getAllReq.result || [];
         const existing = items.find(it => it.name === name);
-        let rawBuf;
-        if (bytes instanceof ArrayBuffer) {
-          rawBuf = bytes.slice(0);
-        } else if (bytes.buffer instanceof ArrayBuffer) {
-          rawBuf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-        } else {
-          rawBuf = bytes;
-        }
+        const finalId = existing ? existing.id : recordId;
         const fileRecord = {
-          id: existing ? existing.id : Date.now(),
+          id: finalId,
           name: name,
           size: rawBuf.byteLength || (bytes && bytes.length) || 0,
           pageCount: pageCount || 1,
           lastOpened: Date.now(),
           starred: existing ? (!!existing.starred) : false,
-          data: rawBuf
+          data: rawBuf,
+          path: filePath || (existing ? existing.path : '')
         };
         store.put(fileRecord);
+
+        // Also persist to disk via Electron main process
+        if (window.electronAPI && window.electronAPI.recentSave) {
+          window.electronAPI.recentSave({
+            id: fileRecord.id,
+            name: fileRecord.name,
+            size: fileRecord.size,
+            pageCount: fileRecord.pageCount,
+            lastOpened: fileRecord.lastOpened,
+            starred: fileRecord.starred,
+            path: fileRecord.path,
+            data: rawBytesArr
+          });
+        }
       };
       
       tx.oncomplete = () => {
@@ -6695,17 +6734,34 @@ const RecentFileManager = (function() {
   async function getRecentFiles() {
     try {
       const db = await openDB();
-      return new Promise((resolve) => {
+      let idbItems = await new Promise((resolve) => {
         const tx = db.transaction(STORE_NAME, 'readonly');
         const store = tx.objectStore(STORE_NAME);
         const req = store.getAll();
-        req.onsuccess = () => {
-          const items = req.result || [];
-          items.sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0));
-          resolve(items);
-        };
+        req.onsuccess = () => resolve(req.result || []);
         req.onerror = () => resolve([]);
       });
+
+      // Also merge disk-persisted recent files from main process
+      if (window.electronAPI && window.electronAPI.recentGetAll) {
+        try {
+          const diskItems = await window.electronAPI.recentGetAll();
+          if (diskItems && Array.isArray(diskItems) && diskItems.length > 0) {
+            const tx2 = db.transaction(STORE_NAME, 'readwrite');
+            const store2 = tx2.objectStore(STORE_NAME);
+            for (const dItem of diskItems) {
+              const match = idbItems.find(x => x.id === dItem.id || x.name === dItem.name);
+              if (!match) {
+                store2.put(dItem);
+                idbItems.push(dItem);
+              }
+            }
+          }
+        } catch (err) {}
+      }
+
+      idbItems.sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0));
+      return idbItems;
     } catch (e) {
       return [];
     }
@@ -6724,7 +6780,22 @@ const RecentFileManager = (function() {
           fbytes = new Uint8Array(record.data.slice(0));
           loverlay.classList.add('on');
           try {
-            await openPDF(fbytes);
+            await openPDF(fbytes, record.path);
+          } catch (err) {
+            toast('Failed to load recent file: ' + err.message, 'error');
+          }
+          loverlay.classList.remove('on');
+        } else if (record && record.path && window.electronAPI && window.electronAPI.readFile) {
+          loverlay.classList.add('on');
+          try {
+            const fileObj = await window.electronAPI.readFile(record.path);
+            if (fileObj && fileObj.data) {
+              fname = fileObj.name || record.name;
+              fbytes = new Uint8Array(fileObj.data);
+              await openPDF(fbytes, record.path);
+            } else {
+              toast('Recent file could not be read from disk', 'warning');
+            }
           } catch (err) {
             toast('Failed to load recent file: ' + err.message, 'error');
           }
@@ -6750,6 +6821,9 @@ const RecentFileManager = (function() {
         if (item) {
           item.starred = !item.starred;
           store.put(item);
+          if (window.electronAPI && window.electronAPI.recentStar) {
+            window.electronAPI.recentStar(id);
+          }
           toast(item.starred ? 'Added to Starred' : 'Removed from Starred', 'star');
         }
       };
@@ -6833,6 +6907,9 @@ const RecentFileManager = (function() {
       const db = await openDB();
       const tx = db.transaction(STORE_NAME, 'readwrite');
       tx.objectStore(STORE_NAME).delete(id);
+      if (window.electronAPI && window.electronAPI.recentDelete) {
+        window.electronAPI.recentDelete(id);
+      }
       tx.oncomplete = () => {
         renderSidebarRecentList();
         renderFilesHub();
@@ -8013,6 +8090,9 @@ function saveProfileFromModal() {
   const newName = input.value.trim();
   if (newName) {
     localStorage.setItem(NAME_STORAGE_KEY, newName);
+    if (window.electronAPI && window.electronAPI.storeSet) {
+      window.electronAPI.storeSet(NAME_STORAGE_KEY, newName);
+    }
     updateProfileUI(newName, newName.toLowerCase().replace(/\s+/g, '') + '@example.com');
     toast(`Profile updated to "${newName}"`, 'user');
   }
@@ -8239,7 +8319,7 @@ function resetUserIdentity() {
   openProfileModal();
 }
 
-(function initIdentityAndIntroFlow() {
+(async function initIdentityAndIntroFlow() {
   const nameScreen = document.getElementById('name-screen');
   const nsPrompt   = document.getElementById('ns-prompt');
   const nsInput    = document.getElementById('ns-input');
@@ -8257,6 +8337,15 @@ function resetUserIdentity() {
   let promptIdx = 0;
   let promptRunning = true;
   let storedName = localStorage.getItem(NAME_STORAGE_KEY);
+  if ((!storedName || !storedName.trim()) && window.electronAPI && window.electronAPI.storeGet) {
+    try {
+      const diskName = await window.electronAPI.storeGet(NAME_STORAGE_KEY);
+      if (diskName && diskName.trim()) {
+        storedName = diskName.trim();
+        localStorage.setItem(NAME_STORAGE_KEY, storedName);
+      }
+    } catch (e) {}
+  }
   const sbUserNameEl = document.getElementById('sb-user-name');
   const sbUserModeEl = document.getElementById('sb-user-mode');
 
@@ -8315,6 +8404,9 @@ function resetUserIdentity() {
 
     const displayName = rawInput;
     localStorage.setItem(NAME_STORAGE_KEY, displayName);
+    if (window.electronAPI && window.electronAPI.storeSet) {
+      window.electronAPI.storeSet(NAME_STORAGE_KEY, displayName);
+    }
     updateProfileUI(displayName, displayName.toLowerCase().replace(/\s+/g, '') + '@example.com');
 
     // Replace input with bare animated name display
