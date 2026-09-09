@@ -196,14 +196,14 @@ ipcMain.handle('start-uninstall', async () => {
       $p = ${currentPid}
       try { Wait-Process -Id $p -Timeout 300 -ErrorAction SilentlyContinue } catch {}
       Start-Sleep -Milliseconds 600
-      $target = '${installDir.replace(/'/g, "''")}'
+      $target = '${installDir.replace(/'/g, "''")}';
       for ($i = 0; $i -lt 30; $i++) {
         if (!(Test-Path -LiteralPath $target)) { break }
         try {
           [System.IO.Directory]::Delete($target, $true)
           break
         } catch {
-          try { & cmd.exe /c "rd /s /q `"$target`"" *>$null } catch {}
+          try { & cmd.exe /c ('rd /s /q "' + $target + '"') *>$null } catch {}
           Start-Sleep -Seconds 1
         }
       }

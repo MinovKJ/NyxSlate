@@ -172,7 +172,7 @@ function registerUninstaller(installPath) {
 
 // ── Set PDF File Association ─────────────────────────────────────────────────
 
-function setPdfAssociation(installPath) {
+function setPdfAssociation(installPath, isDefault = false) {
   const nyxExe = path.join(installPath, 'node_modules', 'electron', 'dist', 'NyxSlate.exe');
   const electronExe = fs.existsSync(nyxExe) ? nyxExe : path.join(installPath, 'node_modules', 'electron', 'dist', 'electron.exe');
   const iconPath = path.join(installPath, 'icon.ico');
@@ -195,7 +195,9 @@ function setPdfAssociation(installPath) {
 
   try {
     // 1. Classes .pdf
-    regAdd('HKCU\\Software\\Classes\\.pdf', '', 'NyxSlate.PDF');
+    if (isDefault) {
+      regAdd('HKCU\\Software\\Classes\\.pdf', '', 'NyxSlate.PDF');
+    }
     regAdd('HKCU\\Software\\Classes\\.pdf\\OpenWithProgids', 'NyxSlate.PDF', '');
     regAdd('HKCU\\Software\\Classes\\.pdf\\OpenWithList\\NyxSlate.exe', '', '');
 
@@ -233,15 +235,55 @@ function setPdfAssociation(installPath) {
     regAdd('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\NyxSlate.exe', 'Path', installPath);
 
     // 7. Notify Windows Shell (SHChangeNotify)
-    const ps = `
-      $signature = @'
+    const psAssoc = `
+      $sig = @'
       [DllImport("shell32.dll")]
       public static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
 '@
-      $type = Add-Type -MemberDefinition $signature -Name 'Win32SHAssoc' -Namespace 'Win32' -PassThru
-      $type::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
+      $t = Add-Type -MemberDefinition $sig -Name 'Win32SHAssoc' -Namespace 'Win32' -PassThru
+      $t::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
     `;
-    execSync(`powershell -NoProfile -Command "${ps.replace(/\r?\n/g, ' ')}"`, { windowsHide: true, stdio: 'ignore' });
+    try {
+      execSync(`powershell -NoProfile -Command "${psAssoc.replace(/\r?\n/g, ' ')}"`, { windowsHide: true, stdio: 'ignore' });
+    } catch (e) {}
+
+    // 8. If user requested default, launch Windows Default Apps UI focused on NyxSlate
+    if (isDefault) {
+      const psDefault = `
+        try {
+          $typeDef = @'
+          using System;
+          using System.Runtime.InteropServices;
+          [ComImport, Guid("1f76a169-f9f3-4047-867b-3e5b4e4da7d4"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+          public interface IAppAssocUI {
+              [PreserveSig] int LaunchAdvancedAssociationUI([MarshalAs(UnmanagedType.LPWStr)] string pszAppRegName);
+          }
+          [ComImport, Guid("19689bf6-c384-4805-a776-11d265045415")]
+          public class AppAssocUI {}
+          public class DefaultRunner {
+              public static void Launch(string name) {
+                  try {
+                      IAppAssocUI ui = (IAppAssocUI)new AppAssocUI();
+                      ui.LaunchAdvancedAssociationUI(name);
+                  } catch {}
+              }
+          }
+'@
+          Add-Type -TypeDefinition $typeDef -Language CSharp
+          [DefaultRunner]::Launch('NyxSlate')
+        } catch {
+          Start-Process 'ms-settings:defaultapps'
+        }
+      `;
+      try {
+        const child = spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', psDefault.replace(/\r?\n/g, ' ')], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true
+        });
+        child.unref();
+      } catch (e) {}
+    }
   } catch (e) { /* continue */ }
 }
 
@@ -408,15 +450,13 @@ pause
     });
     registerUninstaller(installPath);
 
-    // Step 5: Set PDF association (optional)
-    if (setDefaultPdf) {
-      installerWindow.webContents.send('install-progress', {
-        phase: 'association',
-        percent: 94,
-        status: 'Setting file associations...'
-      });
-      setPdfAssociation(installPath);
-    }
+    // Step 5: Set PDF association & capabilities
+    installerWindow.webContents.send('install-progress', {
+      phase: 'association',
+      percent: 94,
+      status: 'Setting file associations...'
+    });
+    setPdfAssociation(installPath, !!setDefaultPdf);
 
     // Done
     installerWindow.webContents.send('install-progress', {
