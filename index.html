@@ -1374,6 +1374,8 @@
       gap: 24px;
     }
     .files-hub-header {
+      position: relative;
+      z-index: 200;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -1403,6 +1405,8 @@
       font-family: 'JetBrains Mono', monospace;
     }
     .files-hub-actions {
+      position: relative;
+      z-index: 210;
       display: flex;
       align-items: center;
       gap: 10px;
@@ -1455,6 +1459,7 @@
     /* Custom Edge Lighting Sort Dropdown */
     .files-sort-wrap {
       position: relative;
+      z-index: 220;
       border-radius: 8px;
       background: rgba(18,15,23,0.92);
       border: 1px solid rgba(255,255,255,0.12);
@@ -1478,17 +1483,17 @@
       top: calc(100% + 6px);
       right: 0;
       min-width: 160px;
-      background: rgba(14,14,18,0.96);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(14,14,18,0.98);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid rgba(255,255,255,0.16);
       border-radius: 8px;
       padding: 4px;
-      box-shadow: 0 16px 36px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.06);
+      box-shadow: 0 20px 40px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.08);
       display: none;
       flex-direction: column;
       gap: 2px;
-      z-index: 500;
+      z-index: 1000;
       animation: menubarFadeIn 0.12s cubic-bezier(0.16,1,0.3,1);
     }
     .files-sort-dropdown.open {
@@ -1718,6 +1723,8 @@
 
     /* Files Grid */
     .files-grid {
+      position: relative;
+      z-index: 1;
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
       gap: 16px;
