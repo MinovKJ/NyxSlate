@@ -187,14 +187,15 @@ ipcMain.handle('dialog-open-file', async (event) => {
   }
 });
 
-// Save PDF Dialog IPC (Asks user where to save the created PDF)
-ipcMain.handle('dialog-save-file', async (event, { defaultName, data }) => {
+// Save File Dialog IPC (Asks user where to save the created or converted file)
+ipcMain.handle('dialog-save-file', async (event, { defaultName, data, filters, title }) => {
   const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
   const result = await dialog.showSaveDialog(win, {
-    title: 'Save PDF Document',
-    defaultPath: defaultName || 'Compiled_Images.pdf',
-    filters: [
-      { name: 'PDF Documents', extensions: ['pdf'] }
+    title: title || 'Save File',
+    defaultPath: defaultName || 'Converted_Document',
+    filters: filters || [
+      { name: 'Documents', extensions: ['pdf', 'docx', 'doc', 'pptx', 'csv', 'rtf', 'html', 'jpg', 'txt'] },
+      { name: 'All Files', extensions: ['*'] }
     ]
   });
 
