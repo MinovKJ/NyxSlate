@@ -1353,31 +1353,40 @@
     }
     .pmodal-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px}
 
-    /* ── Home Right-Side Images to PDF Card (Positioned below Top Profile Circle) ── */
-    .home-img-to-pdf-card {
+    /* ── Home Right-Side Rail (Tools & Quick Actions) ── */
+    .home-right-rail {
       position: fixed;
       top: 62px;
       right: 28px;
       width: 228px;
+      z-index: 520;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      user-select: none;
+      transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    body.doc-loaded .home-right-rail,
+    body.files-view-active .home-right-rail {
+      display: none !important;
+    }
+
+    .home-img-to-pdf-card {
+      position: relative;
+      width: 100%;
       background: rgba(14, 12, 20, 0.88);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
       border: 1px solid rgba(255, 255, 255, 0.09);
       border-radius: 14px;
       padding: 12px 14px;
-      z-index: 520;
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
       cursor: pointer;
-      transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.2s, opacity 0.3s;
-      user-select: none;
+      transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.2s;
     }
     .home-img-to-pdf-card:hover {
       transform: translateY(-2px);
       border-color: rgba(255, 255, 255, 0.22);
-    }
-    body.doc-loaded .home-img-to-pdf-card,
-    body.files-view-active .home-img-to-pdf-card {
-      display: none !important;
     }
 
     .img-to-pdf-header {
@@ -1819,20 +1828,11 @@
 
     /* ── Home Convert Suite Section ── */
     .home-convert-section {
-      position: fixed;
-      top: 204px;
-      right: 28px;
-      width: 228px;
-      z-index: 520;
+      position: relative;
+      width: 100%;
       display: flex;
       flex-direction: column;
       gap: 8px;
-      user-select: none;
-      transition: opacity 0.3s;
-    }
-    body.doc-loaded .home-convert-section,
-    body.files-view-active .home-convert-section {
-      display: none !important;
     }
     .home-convert-title {
       font-size: 13px;
@@ -1847,6 +1847,7 @@
       gap: 6px;
     }
     .convert-card {
+      position: relative;
       background: rgba(14, 12, 20, 0.88);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
@@ -1855,43 +1856,44 @@
       padding: 7px 8px;
       display: flex;
       align-items: center;
-      gap: 8px;
       cursor: pointer;
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-      transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
-      position: relative;
-      overflow: hidden;
+      transition: transform 0.16s ease, border-color 0.16s ease;
+      overflow: visible;
     }
     .convert-card:hover {
       transform: translateY(-2px);
       border-color: rgba(255, 255, 255, 0.22);
-      background: rgba(24, 20, 36, 0.95);
     }
     .convert-card:active {
       transform: translateY(0);
     }
+    .convert-card-inner {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      position: relative;
+      z-index: 2;
+    }
     .convert-badge {
       width: 28px;
       height: 28px;
-      border-radius: 50%;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
       display: flex;
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
       color: #ffffff;
-      font-size: 11px;
-      font-weight: 700;
       box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
     }
-    .convert-badge.badge-docx { background: linear-gradient(135deg, #2563eb, #3b82f6); }
-    .convert-badge.badge-doc  { background: linear-gradient(135deg, #1d4ed8, #2563eb); }
-    .convert-badge.badge-ppt  { background: linear-gradient(135deg, #ea580c, #f97316); }
-    .convert-badge.badge-xls  { background: linear-gradient(135deg, #16a34a, #22c55e); }
-    .convert-badge.badge-rtf  { background: linear-gradient(135deg, #64748b, #7c3aed); }
-    .convert-badge.badge-html { background: linear-gradient(135deg, #6366f1, #4f46e5); }
-    .convert-badge.badge-jpg  { background: linear-gradient(135deg, #e11d48, #f43f5e); }
-    .convert-badge.badge-txt  { background: linear-gradient(135deg, #475569, #64748b); }
-
+    .convert-card:hover .convert-badge {
+      background: rgba(255, 255, 255, 0.14);
+      border-color: rgba(255, 255, 255, 0.25);
+    }
     .convert-text-wrap {
       display: flex;
       flex-direction: column;
@@ -2675,138 +2677,157 @@
         </div>
       </div>
       
-      <!-- Home Screen Right-Side Quick Tools: Images to PDF -->
-      <div id="home-img-to-pdf-card" class="home-img-to-pdf-card border-glow-card" onclick="openImageToPdfPicker(event)" title="Convert & compile images into PDF">
-        <span class="edge-light"></span>
-        <div class="border-glow-inner">
-          <div class="img-to-pdf-header">
-            <div class="img-to-pdf-title-grp">
-              <div class="img-to-pdf-icon-box">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>
-                  <circle cx="9" cy="9" r="2"/>
-                  <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
+      <!-- Home Screen Right-Side Quick Tools Rail -->
+      <div id="home-right-rail" class="home-right-rail">
+        <!-- Images to PDF Card -->
+        <div id="home-img-to-pdf-card" class="home-img-to-pdf-card border-glow-card" onclick="openImageToPdfPicker(event)" title="Convert & compile images into PDF">
+          <span class="edge-light"></span>
+          <div class="border-glow-inner">
+            <div class="img-to-pdf-header">
+              <div class="img-to-pdf-title-grp">
+                <div class="img-to-pdf-icon-box">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>
+                    <circle cx="9" cy="9" r="2"/>
+                    <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
+                  </svg>
+                </div>
+                <div class="img-to-pdf-title-box">
+                  <div class="img-to-pdf-main-title">Images to PDF</div>
+                  <div class="img-to-pdf-sub-title">Convert to Document</div>
+                </div>
+              </div>
+              <div class="img-to-pdf-badge">NEW</div>
+            </div>
+
+            <div class="img-to-pdf-dropzone-box" id="img-to-pdf-dropzone">
+              <div class="img-to-pdf-upload-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
                 </svg>
               </div>
-              <div class="img-to-pdf-title-box">
-                <div class="img-to-pdf-main-title">Images to PDF</div>
-                <div class="img-to-pdf-sub-title">Convert to Document</div>
-              </div>
+              <div class="img-to-pdf-drop-text">Click or drop images</div>
+              <div class="img-to-pdf-exts">JPG &middot; PNG &middot; WEBP &middot; BMP</div>
             </div>
-            <div class="img-to-pdf-badge">NEW</div>
-          </div>
-
-          <div class="img-to-pdf-dropzone-box" id="img-to-pdf-dropzone">
-            <div class="img-to-pdf-upload-icon">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="17 8 12 3 7 8"/>
-                <line x1="12" y1="3" x2="12" y2="15"/>
-              </svg>
-            </div>
-            <div class="img-to-pdf-drop-text">Click or drop images</div>
-            <div class="img-to-pdf-exts">JPG &middot; PNG &middot; WEBP &middot; BMP</div>
           </div>
         </div>
-      </div>
-      
-      <!-- Home Screen Right-Side Quick Tools: Convert Suite -->
-      <div id="home-convert-section" class="home-convert-section">
-        <div class="home-convert-title">Convert</div>
-        <div class="home-convert-grid">
-          <!-- PDF to DOCX -->
-          <div class="convert-card border-glow-card" onclick="PDFConvertEngine.triggerConversion('docx')" title="Convert PDF to Word DOCX Document">
-            <span class="edge-light"></span>
-            <div class="convert-badge badge-docx">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="m9 15 1.5 3 1.5-3 1.5 3 1.5-3"/></svg>
+        
+        <!-- Convert Suite -->
+        <div id="home-convert-section" class="home-convert-section">
+          <div class="home-convert-title">Convert</div>
+          <div class="home-convert-grid">
+            <!-- PDF to DOCX -->
+            <div class="convert-card border-glow-card" onclick="PDFConvertEngine.triggerConversion('docx')" title="Convert PDF to Word DOCX Document">
+              <span class="edge-light"></span>
+              <div class="convert-card-inner">
+                <div class="convert-badge">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="m9 15 1.5 3 1.5-3 1.5 3 1.5-3"/></svg>
+                </div>
+                <div class="convert-text-wrap">
+                  <span class="convert-sub">PDF to</span>
+                  <span class="convert-name">DOCX</span>
+                </div>
+              </div>
             </div>
-            <div class="convert-text-wrap">
-              <span class="convert-sub">PDF to</span>
-              <span class="convert-name">DOCX</span>
-            </div>
-          </div>
 
-          <!-- PDF to DOC -->
-          <div class="convert-card border-glow-card" onclick="PDFConvertEngine.triggerConversion('doc')" title="Convert PDF to Word DOC Document">
-            <span class="edge-light"></span>
-            <div class="convert-badge badge-doc">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+            <!-- PDF to DOC -->
+            <div class="convert-card border-glow-card" onclick="PDFConvertEngine.triggerConversion('doc')" title="Convert PDF to Word DOC Document">
+              <span class="edge-light"></span>
+              <div class="convert-card-inner">
+                <div class="convert-badge">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+                </div>
+                <div class="convert-text-wrap">
+                  <span class="convert-sub">PDF to</span>
+                  <span class="convert-name">DOC</span>
+                </div>
+              </div>
             </div>
-            <div class="convert-text-wrap">
-              <span class="convert-sub">PDF to</span>
-              <span class="convert-name">DOC</span>
-            </div>
-          </div>
 
-          <!-- PDF to PPT -->
-          <div class="convert-card border-glow-card" onclick="PDFConvertEngine.triggerConversion('ppt')" title="Convert PDF to PowerPoint Presentation">
-            <span class="edge-light"></span>
-            <div class="convert-badge badge-ppt">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="14" rx="2"/><path d="M7 21h10M12 17v4"/><path d="M8 8h4a2 2 0 0 1 0 4H8v3"/></svg>
+            <!-- PDF to PPT -->
+            <div class="convert-card border-glow-card" onclick="PDFConvertEngine.triggerConversion('ppt')" title="Convert PDF to PowerPoint Presentation">
+              <span class="edge-light"></span>
+              <div class="convert-card-inner">
+                <div class="convert-badge">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="14" rx="2"/><path d="M7 21h10M12 17v4"/><path d="M8 8h4a2 2 0 0 1 0 4H8v3"/></svg>
+                </div>
+                <div class="convert-text-wrap">
+                  <span class="convert-sub">PDF to</span>
+                  <span class="convert-name">PPT</span>
+                </div>
+              </div>
             </div>
-            <div class="convert-text-wrap">
-              <span class="convert-sub">PDF to</span>
-              <span class="convert-name">PPT</span>
-            </div>
-          </div>
 
-          <!-- PDF to Excel -->
-          <div class="convert-card border-glow-card" onclick="PDFConvertEngine.triggerConversion('excel')" title="Convert PDF to Excel Spreadsheet">
-            <span class="edge-light"></span>
-            <div class="convert-badge badge-xls">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="17"/><line x1="16" y1="13" x2="8" y2="17"/></svg>
+            <!-- PDF to Excel -->
+            <div class="convert-card border-glow-card" onclick="PDFConvertEngine.triggerConversion('excel')" title="Convert PDF to Excel Spreadsheet">
+              <span class="edge-light"></span>
+              <div class="convert-card-inner">
+                <div class="convert-badge">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="17"/><line x1="16" y1="13" x2="8" y2="17"/></svg>
+                </div>
+                <div class="convert-text-wrap">
+                  <span class="convert-sub">PDF to</span>
+                  <span class="convert-name">Excel</span>
+                </div>
+              </div>
             </div>
-            <div class="convert-text-wrap">
-              <span class="convert-sub">PDF to</span>
-              <span class="convert-name">Excel</span>
-            </div>
-          </div>
 
-          <!-- PDF to RTF -->
-          <div class="convert-card border-glow-card" onclick="PDFConvertEngine.triggerConversion('rtf')" title="Convert PDF to Rich Text Format">
-            <span class="edge-light"></span>
-            <div class="convert-badge badge-rtf">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 17v-6h3a2 2 0 0 1 0 4H9m3 0 2 2"/></svg>
+            <!-- PDF to RTF -->
+            <div class="convert-card border-glow-card" onclick="PDFConvertEngine.triggerConversion('rtf')" title="Convert PDF to Rich Text Format">
+              <span class="edge-light"></span>
+              <div class="convert-card-inner">
+                <div class="convert-badge">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 17v-6h3a2 2 0 0 1 0 4H9m3 0 2 2"/></svg>
+                </div>
+                <div class="convert-text-wrap">
+                  <span class="convert-sub">PDF to</span>
+                  <span class="convert-name">RTF</span>
+                </div>
+              </div>
             </div>
-            <div class="convert-text-wrap">
-              <span class="convert-sub">PDF to</span>
-              <span class="convert-name">RTF</span>
-            </div>
-          </div>
 
-          <!-- PDF to HTML -->
-          <div class="convert-card border-glow-card" onclick="PDFConvertEngine.triggerConversion('html')" title="Convert PDF to HTML Webpage">
-            <span class="edge-light"></span>
-            <div class="convert-badge badge-html">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            <!-- PDF to HTML -->
+            <div class="convert-card border-glow-card" onclick="PDFConvertEngine.triggerConversion('html')" title="Convert PDF to HTML Webpage">
+              <span class="edge-light"></span>
+              <div class="convert-card-inner">
+                <div class="convert-badge">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                </div>
+                <div class="convert-text-wrap">
+                  <span class="convert-sub">PDF to</span>
+                  <span class="convert-name">HTML</span>
+                </div>
+              </div>
             </div>
-            <div class="convert-text-wrap">
-              <span class="convert-sub">PDF to</span>
-              <span class="convert-name">HTML</span>
-            </div>
-          </div>
 
-          <!-- PDF to JPG -->
-          <div class="convert-card border-glow-card" onclick="PDFConvertEngine.triggerConversion('jpg')" title="Convert PDF to JPG Images">
-            <span class="edge-light"></span>
-            <div class="convert-badge badge-jpg">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            <!-- PDF to JPG -->
+            <div class="convert-card border-glow-card" onclick="PDFConvertEngine.triggerConversion('jpg')" title="Convert PDF to JPG Images">
+              <span class="edge-light"></span>
+              <div class="convert-card-inner">
+                <div class="convert-badge">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                </div>
+                <div class="convert-text-wrap">
+                  <span class="convert-sub">PDF to</span>
+                  <span class="convert-name">JPG</span>
+                </div>
+              </div>
             </div>
-            <div class="convert-text-wrap">
-              <span class="convert-sub">PDF to</span>
-              <span class="convert-name">JPG</span>
-            </div>
-          </div>
 
-          <!-- PDF to TXT -->
-          <div class="convert-card border-glow-card" onclick="PDFConvertEngine.triggerConversion('txt')" title="Convert PDF to Plain Text">
-            <span class="edge-light"></span>
-            <div class="convert-badge badge-txt">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="9" y1="20" x2="15" y2="20"/></svg>
-            </div>
-            <div class="convert-text-wrap">
-              <span class="convert-sub">PDF to</span>
-              <span class="convert-name">TXT</span>
+            <!-- PDF to TXT -->
+            <div class="convert-card border-glow-card" onclick="PDFConvertEngine.triggerConversion('txt')" title="Convert PDF to Plain Text">
+              <span class="edge-light"></span>
+              <div class="convert-card-inner">
+                <div class="convert-badge">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="9" y1="20" x2="15" y2="20"/></svg>
+                </div>
+                <div class="convert-text-wrap">
+                  <span class="convert-sub">PDF to</span>
+                  <span class="convert-name">TXT</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -9696,10 +9717,25 @@ function initAllBorderGlowBoxes() {
       glowRadius: 22,
       glowIntensity: 1.0,
       coneSpread: 25,
-      colors: ['#c084fc', '#f472b6', '#38bdf8'],
+      colors: ['#38bdf8', '#c084fc', '#f472b6'],
       fillOpacity: 0.55
     });
   }
+
+  // 12. Convert Suite Cards (Edge Lighting)
+  document.querySelectorAll('.convert-card').forEach(card => {
+    initBorderGlow(card, {
+      edgeSensitivity: 25,
+      glowColor: '40 80 80',
+      backgroundColor: '#120f18',
+      borderRadius: 10,
+      glowRadius: 16,
+      glowIntensity: 0.95,
+      coneSpread: 25,
+      colors: ['#38bdf8', '#c084fc', '#f472b6'],
+      fillOpacity: 0.45
+    });
+  });
 }
 
 // Initialize Edge Lighting across all UI boxes
