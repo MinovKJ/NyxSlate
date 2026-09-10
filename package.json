@@ -36,6 +36,10 @@
     ]
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.1",
+    "@capacitor/cli": "^8.5.1",
+    "@capacitor/core": "^8.5.1",
+    "docx-preview": "^0.4.0",
     "pdf-lib": "^1.17.1"
   }
 }

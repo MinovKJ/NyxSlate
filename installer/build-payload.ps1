@@ -38,6 +38,8 @@ $filesToCopy = @(
     "pdf-lib.min.js",
     "pdf.min.js",
     "pdf.worker.min.js",
+    "docx-preview.min.js",
+    "jszip.min.js",
     "Launch NyxSlate.bat",
     "Uninstall NyxSlate.bat",
     "uninstaller-main.js",

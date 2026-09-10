@@ -5,3 +5,7 @@ installer/payload/
 installer/node_modules/
 installer/dist/
 NyxSlate.exe
+android/.gradle/
+android/app/build/
+android/build/
+.gradle/

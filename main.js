@@ -103,19 +103,19 @@ function createWindow() {
 
   // Check if a file was passed as argument (e.g., Open With on Windows)
   const args = process.argv.slice(app.isPackaged ? 1 : 2);
-  const pdfArg = args.find(a => a && a.toLowerCase().endsWith('.pdf') && fs.existsSync(a));
+  const docArg = args.find(a => a && (a.toLowerCase().endsWith('.pdf') || a.toLowerCase().endsWith('.docx')) && fs.existsSync(a));
 
   win.webContents.on('did-finish-load', () => {
-    if (pdfArg) {
+    if (docArg) {
       try {
-        const fileData = fs.readFileSync(pdfArg);
+        const fileData = fs.readFileSync(docArg);
         win.webContents.send('open-file-from-cli', {
-          name: path.basename(pdfArg),
-          path: pdfArg,
+          name: path.basename(docArg),
+          path: docArg,
           data: Array.from(fileData)
         });
       } catch (err) {
-        console.error('Failed to read CLI pdf argument:', err);
+        console.error('Failed to read CLI document argument:', err);
       }
     }
   });
@@ -162,9 +162,12 @@ ipcMain.on('window-toggle-fullscreen', (event) => {
 ipcMain.handle('dialog-open-file', async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
   const result = await dialog.showOpenDialog(win, {
-    title: 'Select PDF Document',
+    title: 'Select Document (PDF or DOCX)',
     filters: [
-      { name: 'PDF Documents', extensions: ['pdf'] }
+      { name: 'Supported Documents (*.pdf, *.docx)', extensions: ['pdf', 'docx'] },
+      { name: 'PDF Documents (*.pdf)', extensions: ['pdf'] },
+      { name: 'Word Documents (*.docx)', extensions: ['docx'] },
+      { name: 'All Files (*.*)', extensions: ['*'] }
     ],
     properties: ['openFile']
   });

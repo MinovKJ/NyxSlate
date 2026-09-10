@@ -226,7 +226,7 @@ if (!$isRootOrProtected -and $isNyxSubfolder) {
     }
 } else {
     # Not a dedicated NyxSlate folder: NEVER delete the directory itself, only delete app files
-    $appFiles = @('node_modules', 'index.html', 'main.js', 'preload.js', 'package.json', 'package-lock.json', 'icon.ico', 'icon.png', 'pdf-lib.min.js', 'pdf.min.js', 'pdf.worker.min.js', 'Launch NyxSlate.bat', 'Uninstall NyxSlate.bat', 'uninstall.bat', 'uninstaller-main.js', 'uninstaller-preload.js', 'uninstaller.html', 'install-manifest.json')
+    $appFiles = @('node_modules', 'index.html', 'main.js', 'preload.js', 'package.json', 'package-lock.json', 'icon.ico', 'icon.png', 'pdf-lib.min.js', 'pdf.min.js', 'pdf.worker.min.js', 'docx-preview.min.js', 'jszip.min.js', 'Launch NyxSlate.bat', 'Uninstall NyxSlate.bat', 'uninstall.bat', 'uninstaller-main.js', 'uninstaller-preload.js', 'uninstaller.html', 'install-manifest.json')
     foreach ($f in $appFiles) {
         $fp = Join-Path $target $f
         if (Test-Path -LiteralPath $fp) {

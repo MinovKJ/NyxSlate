@@ -1,0 +1,14 @@
+{
+  "appId": "com.nyxslate.app",
+  "appName": "NyxSlate",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "backgroundColor": "#050505",
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  }
+}
