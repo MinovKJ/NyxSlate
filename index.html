@@ -7684,49 +7684,201 @@ const PDFConvertEngine = (function() {
     }
   }
 
-  // Extract text line-by-line for each page
-  async function extractPages(pdfDoc) {
+  // Advanced Layout Analysis (inspired by pdf2docx architecture)
+  async function analyzeLayout(pdfDoc) {
     const pages = [];
+    const allFontSizes = [];
+
     for (let i = 1; i <= pdfDoc.numPages; i++) {
       const page = await pdfDoc.getPage(i);
+      const viewport = page.getViewport({ scale: 1.0 });
       const textContent = await page.getTextContent();
-      const items = textContent.items.map(item => ({
-        str: item.str,
-        x: item.transform[4],
-        y: item.transform[5],
-        width: item.width,
-        height: item.height
-      }));
 
-      // Sort by vertical position descending, then horizontal position ascending
+      const items = textContent.items.map(item => {
+        const tx = item.transform;
+        // Compute actual font size from transformation matrix
+        const fontSize = Math.sqrt(tx[0] * tx[0] + tx[1] * tx[1]) || 12;
+        const fontName = item.fontName || '';
+        const isBold = /bold|black|heavy|medium|semibold/i.test(fontName);
+        const isItalic = /italic|oblique/i.test(fontName);
+        const isMono = /mono|courier|consolas/i.test(fontName);
+
+        allFontSizes.push(fontSize);
+
+        return {
+          str: item.str,
+          x: tx[4],
+          y: tx[5],
+          width: item.width || 0,
+          height: item.height || fontSize,
+          fontSize: Math.round(fontSize * 10) / 10,
+          fontName,
+          isBold,
+          isItalic,
+          isMono
+        };
+      });
+
+      // Sort top-to-bottom (PDF Y is from bottom up), then left-to-right
       items.sort((a, b) => {
-        if (Math.abs(b.y - a.y) > 4) return b.y - a.y;
+        if (Math.abs(b.y - a.y) > 3.5) return b.y - a.y;
         return a.x - b.x;
       });
 
-      const lines = [];
-      let currentLine = [];
+      // Group items into coherent lines
+      const rawLines = [];
+      let curLineItems = [];
       let lastY = null;
 
       for (const it of items) {
-        if (!it.str.trim() && !it.str.includes(' ')) continue;
-        if (lastY === null || Math.abs(it.y - lastY) <= 4) {
-          currentLine.push(it.str);
+        if (!it.str && it.str !== ' ') continue;
+        if (lastY === null || Math.abs(it.y - lastY) <= 3.5) {
+          curLineItems.push(it);
           lastY = it.y;
         } else {
-          if (currentLine.length > 0) lines.push(currentLine.join(' '));
-          currentLine = [it.str];
+          if (curLineItems.length > 0) rawLines.push(curLineItems);
+          curLineItems = [it];
           lastY = it.y;
         }
       }
-      if (currentLine.length > 0) lines.push(currentLine.join(' '));
+      if (curLineItems.length > 0) rawLines.push(curLineItems);
 
       pages.push({
         pageNumber: i,
-        lines: lines
+        width: viewport.width,
+        height: viewport.height,
+        rawLines
       });
     }
-    return pages;
+
+    // Determine baseline body font size (statistical mode)
+    const sizeCounts = {};
+    for (const s of allFontSizes) {
+      const rounded = Math.round(s);
+      sizeCounts[rounded] = (sizeCounts[rounded] || 0) + 1;
+    }
+    let baseFontSize = 11;
+    let maxCount = 0;
+    for (const [sz, cnt] of Object.entries(sizeCounts)) {
+      if (cnt > maxCount) {
+        maxCount = cnt;
+        baseFontSize = parseFloat(sz);
+      }
+    }
+
+    // Process blocks, tables, headings, and lists per page
+    const structuredPages = pages.map(page => {
+      const blocks = [];
+      let pendingTableRows = [];
+
+      for (let lIdx = 0; lIdx < page.rawLines.length; lIdx++) {
+        const lineItems = page.rawLines[lIdx];
+        const lineText = lineItems.map(it => it.str).join('').trim();
+        if (!lineText) continue;
+
+        // Detect multiple separated columns (tables)
+        const columns = [];
+        let curCol = [lineItems[0]];
+        for (let k = 1; k < lineItems.length; k++) {
+          const prev = lineItems[k - 1];
+          const curr = lineItems[k];
+          const gap = curr.x - (prev.x + prev.width);
+          if (gap > 22 && curr.str.trim() && prev.str.trim()) {
+            columns.push(curCol.map(c => c.str).join(' ').trim());
+            curCol = [curr];
+          } else {
+            curCol.push(curr);
+          }
+        }
+        if (curCol.length > 0) {
+          columns.push(curCol.map(c => c.str).join(' ').trim());
+        }
+
+        const isTableCandidate = columns.length >= 2 && columns.every(c => c.length > 0);
+
+        if (isTableCandidate) {
+          pendingTableRows.push(columns);
+          continue;
+        } else if (pendingTableRows.length > 0) {
+          if (pendingTableRows.length >= 2) {
+            blocks.push({ type: 'table', rows: pendingTableRows });
+          } else {
+            blocks.push({
+              type: 'paragraph',
+              text: pendingTableRows[0].join('   '),
+              style: 'Normal',
+              runs: [{ str: pendingTableRows[0].join('   '), fontSize: baseFontSize, isBold: false, isItalic: false }]
+            });
+          }
+          pendingTableRows = [];
+        }
+
+        // Analyze font properties of this line
+        const maxLineFontSize = Math.max(...lineItems.map(it => it.fontSize));
+        const hasBold = lineItems.some(it => it.isBold);
+        const hasItalic = lineItems.some(it => it.isItalic);
+        const minX = lineItems[0].x;
+        const maxX = lineItems[lineItems.length - 1].x + lineItems[lineItems.length - 1].width;
+        const lineCenter = (minX + maxX) / 2;
+        const pageCenter = page.width / 2;
+
+        let align = 'left';
+        if (Math.abs(lineCenter - pageCenter) < 18 && minX > 50) {
+          align = 'center';
+        } else if (page.width - maxX < 50 && minX > 150) {
+          align = 'right';
+        }
+
+        let style = 'Normal';
+        if (maxLineFontSize >= baseFontSize * 1.55) {
+          style = 'Heading1';
+        } else if (maxLineFontSize >= baseFontSize * 1.28) {
+          style = 'Heading2';
+        } else if (maxLineFontSize >= baseFontSize * 1.12 && hasBold) {
+          style = 'Heading3';
+        }
+
+        const isList = /^[•\-\*\u2022\u2023\u25E6\u2043\u2219]\s+|^\d+[\.\)]\s+|^\([a-zA-Z0-9]\)\s+/.test(lineText);
+
+        blocks.push({
+          type: isList ? 'list' : 'paragraph',
+          style,
+          align,
+          text: lineText,
+          runs: lineItems.map(it => ({
+            str: it.str,
+            fontSize: it.fontSize,
+            isBold: it.isBold || style === 'Heading1' || style === 'Heading2',
+            isItalic: it.isItalic
+          }))
+        });
+      }
+
+      if (pendingTableRows.length > 0) {
+        if (pendingTableRows.length >= 2) {
+          blocks.push({ type: 'table', rows: pendingTableRows });
+        } else {
+          blocks.push({
+            type: 'paragraph',
+            text: pendingTableRows[0].join('   '),
+            style: 'Normal',
+            runs: [{ str: pendingTableRows[0].join('   '), fontSize: baseFontSize, isBold: false, isItalic: false }]
+          });
+        }
+      }
+
+      return {
+        pageNumber: page.pageNumber,
+        width: page.width,
+        height: page.height,
+        blocks
+      };
+    });
+
+    return {
+      pages: structuredPages,
+      baseFontSize
+    };
   }
 
   // Helper: Save converted output via Electron Save Dialog or Browser Fallback
@@ -7761,22 +7913,54 @@ const PDFConvertEngine = (function() {
 
   // 1. PDF to TXT
   async function exportTxt(pdfDoc, baseName) {
-    const pages = await extractPages(pdfDoc);
-    const content = pages.map(p => `--- Page ${p.pageNumber} ---\n` + p.lines.join('\n')).join('\n\n');
-    const bytes = new TextEncoder().encode(content);
+    const layout = await analyzeLayout(pdfDoc);
+    const textParts = [];
+    for (const p of layout.pages) {
+      textParts.push(`--- Page ${p.pageNumber} ---`);
+      for (const b of p.blocks) {
+        if (b.type === 'table') {
+          for (const row of b.rows) {
+            textParts.push(row.join('\t'));
+          }
+        } else {
+          textParts.push(b.text);
+        }
+      }
+      textParts.push('');
+    }
+    const bytes = new TextEncoder().encode(textParts.join('\n'));
     await saveResult(bytes, `${baseName}.txt`, 'Plain Text Document', 'txt');
   }
 
   // 2. PDF to HTML
   async function exportHtml(pdfDoc, baseName) {
-    const pages = await extractPages(pdfDoc);
-    const pageHtmls = pages.map(p => `
+    const layout = await analyzeLayout(pdfDoc);
+    const pageHtmls = layout.pages.map(p => {
+      const bodyItems = p.blocks.map(b => {
+        if (b.type === 'table') {
+          const rows = b.rows.map(r => `<tr>${r.map(c => `<td>${escapeXml(c)}</td>`).join('')}</tr>`).join('\n          ');
+          return `<table class="doc-table">\n          ${rows}\n        </table>`;
+        } else if (b.style === 'Heading1') {
+          return `<h1 style="text-align:${b.align}">${escapeXml(b.text)}</h1>`;
+        } else if (b.style === 'Heading2') {
+          return `<h2 style="text-align:${b.align}">${escapeXml(b.text)}</h2>`;
+        } else if (b.style === 'Heading3') {
+          return `<h3 style="text-align:${b.align}">${escapeXml(b.text)}</h3>`;
+        } else if (b.type === 'list') {
+          return `<div class="doc-list-item">${escapeXml(b.text)}</div>`;
+        } else {
+          return `<p style="text-align:${b.align}">${escapeXml(b.text)}</p>`;
+        }
+      }).join('\n        ');
+
+      return `
       <section class="pdf-page">
         <header class="page-meta">Page ${p.pageNumber}</header>
         <div class="page-content">
-          ${p.lines.map(line => `<p>${escapeXml(line)}</p>`).join('\n          ')}
+        ${bodyItems}
         </div>
-      </section>`).join('\n');
+      </section>`;
+    }).join('\n');
 
     const fullHtml = `<!DOCTYPE html>
 <html lang="en">
@@ -7815,12 +7999,13 @@ const PDFConvertEngine = (function() {
       margin-bottom: 24px;
       font-weight: 600;
     }
-    .page-content p {
-      font-size: 14px;
-      line-height: 1.65;
-      margin: 0 0 12px 0;
-      color: #d4d4d8;
-    }
+    h1 { font-size: 20px; color: #38bdf8; margin: 16px 0 8px 0; font-weight: 700; }
+    h2 { font-size: 16px; color: #f472b6; margin: 14px 0 6px 0; font-weight: 600; }
+    h3 { font-size: 14px; color: #e2e8f0; margin: 12px 0 4px 0; font-weight: 600; }
+    p { font-size: 13.5px; line-height: 1.6; margin: 0 0 10px 0; color: #d4d4d8; }
+    .doc-list-item { font-size: 13.5px; line-height: 1.6; margin: 0 0 6px 18px; color: #d4d4d8; }
+    .doc-table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13px; }
+    .doc-table td { border: 1px solid rgba(255, 255, 255, 0.15); padding: 8px 12px; }
   </style>
 </head>
 <body>
@@ -7834,18 +8019,30 @@ const PDFConvertEngine = (function() {
 
   // 3. PDF to RTF
   async function exportRtf(pdfDoc, baseName) {
-    const pages = await extractPages(pdfDoc);
+    const layout = await analyzeLayout(pdfDoc);
     let rtfBody = '{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0\\fnil\\fcharset0 Calibri;}{\\f1\\fnil\\fcharset0 Segoe UI;}}\n';
-    rtfBody += '{\\colortbl ;\\red15\\green23\\blue42;\\red56\\green189\\blue248;}\n';
+    rtfBody += '{\\colortbl ;\\red15\\green23\\blue42;\\red56\\green189\\blue248;\\red244\\green114\\blue182;}\n';
     rtfBody += '\\viewkind4\\uc1\\pard\\f0\\fs22 ';
 
-    for (let i = 0; i < pages.length; i++) {
-      const p = pages[i];
+    for (let i = 0; i < layout.pages.length; i++) {
+      const p = layout.pages[i];
       rtfBody += `\\b\\cf2 [Page ${p.pageNumber}]\\cf0\\b0\\par\n`;
-      for (const line of p.lines) {
-        rtfBody += escapeRtf(line) + '\\par\n';
+
+      for (const b of p.blocks) {
+        if (b.type === 'table') {
+          for (const row of b.rows) {
+            rtfBody += row.map(c => escapeRtf(c)).join('   \\tab ') + '\\par\n';
+          }
+        } else if (b.style === 'Heading1') {
+          rtfBody += `\\b\\fs32\\cf2 ${escapeRtf(b.text)}\\cf0\\fs22\\b0\\par\n`;
+        } else if (b.style === 'Heading2') {
+          rtfBody += `\\b\\fs26\\cf3 ${escapeRtf(b.text)}\\cf0\\fs22\\b0\\par\n`;
+        } else {
+          rtfBody += escapeRtf(b.text) + '\\par\n';
+        }
       }
-      if (i < pages.length - 1) {
+
+      if (i < layout.pages.length - 1) {
         rtfBody += '\\page\n';
       }
     }
@@ -7855,15 +8052,32 @@ const PDFConvertEngine = (function() {
     await saveResult(bytes, `${baseName}.rtf`, 'Rich Text Format', 'rtf');
   }
 
-  // 4. PDF to DOC (Word HTML format)
+  // 4. PDF to DOC (Word Format)
   async function exportDoc(pdfDoc, baseName) {
-    const pages = await extractPages(pdfDoc);
-    const pagesDoc = pages.map(p => `
+    const layout = await analyzeLayout(pdfDoc);
+    const pagesDoc = layout.pages.map(p => {
+      const bodyItems = p.blocks.map(b => {
+        if (b.type === 'table') {
+          const rows = b.rows.map(r => `<tr>${r.map(c => `<td style="border:1px solid #cbd5e1;padding:6pt 8pt;">${escapeXml(c)}</td>`).join('')}</tr>`).join('\n          ');
+          return `<table style="width:100%;border-collapse:collapse;margin:10pt 0;">\n          ${rows}\n        </table>`;
+        } else if (b.style === 'Heading1') {
+          return `<h1 style="font-size:16pt;color:#1e40af;margin:12pt 0 6pt 0;text-align:${b.align}">${escapeXml(b.text)}</h1>`;
+        } else if (b.style === 'Heading2') {
+          return `<h2 style="font-size:13pt;color:#334155;margin:10pt 0 4pt 0;text-align:${b.align}">${escapeXml(b.text)}</h2>`;
+        } else if (b.type === 'list') {
+          return `<p style="margin:0 0 4pt 18pt;font-size:11pt;line-height:1.4;">${escapeXml(b.text)}</p>`;
+        } else {
+          return `<p style="margin:0 0 6pt 0;font-size:11pt;line-height:1.4;text-align:${b.align}">${escapeXml(b.text)}</p>`;
+        }
+      }).join('\n        ');
+
+      return `
       <div class="WordSection">
-        <p style="font-size:9pt;color:#64748b;margin-bottom:12pt;font-weight:bold;text-transform:uppercase;">Page ${p.pageNumber}</p>
-        ${p.lines.map(line => `<p style="margin:0 0 6pt 0;font-size:11pt;line-height:1.4;">${escapeXml(line)}</p>`).join('\n        ')}
+        <p style="font-size:9pt;color:#94a3b8;margin-bottom:10pt;font-weight:bold;text-transform:uppercase;">Page ${p.pageNumber}</p>
+        ${bodyItems}
       </div>
-      <br clear="all" style="page-break-before:always;" />`).join('\n');
+      <br clear="all" style="page-break-before:always;" />`;
+    }).join('\n');
 
     const docContent = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
 <head>
@@ -7892,27 +8106,96 @@ const PDFConvertEngine = (function() {
     await saveResult(bytes, `${baseName}.doc`, 'Word Document', 'doc');
   }
 
-  // 5. PDF to DOCX (Authentic OpenXML Zip Package)
+  // 5. PDF to DOCX (High-Fidelity pdf2docx-style OpenXML Package)
   async function exportDocx(pdfDoc, baseName) {
-    const pages = await extractPages(pdfDoc);
+    const layout = await analyzeLayout(pdfDoc);
 
     let docXmlBody = '';
-    for (let pIdx = 0; pIdx < pages.length; pIdx++) {
-      const p = pages[pIdx];
-      docXmlBody += `
-      <w:p>
-        <w:pPr><w:pStyle w:val="Heading2"/></w:pPr>
-        <w:r><w:rPr><w:b/><w:color w:val="2563EB"/></w:rPr><w:t>Page ${p.pageNumber}</w:t></w:r>
-      </w:p>`;
+    for (let pIdx = 0; pIdx < layout.pages.length; pIdx++) {
+      const p = layout.pages[pIdx];
 
-      for (const line of p.lines) {
-        docXmlBody += `
+      for (const b of p.blocks) {
+        if (b.type === 'table') {
+          // Native OpenXML Table Structure
+          docXmlBody += `
+      <w:tbl>
+        <w:tblPr>
+          <w:tblW w:w="5000" w:type="pct"/>
+          <w:tblBorders>
+            <w:top w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>
+            <w:left w:val="none"/>
+            <w:bottom w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>
+            <w:right w:val="none"/>
+            <w:insideH w:val="single" w:sz="4" w:space="0" w:color="E2E8F0"/>
+            <w:insideV w:val="none"/>
+          </w:tblBorders>
+        </w:tblPr>`;
+
+          for (const row of b.rows) {
+            docXmlBody += `
+        <w:tr>`;
+            for (const cell of row) {
+              docXmlBody += `
+          <w:tc>
+            <w:tcPr>
+              <w:tcMar>
+                <w:top w:w="120" w:type="dxa"/>
+                <w:bottom w:w="120" w:type="dxa"/>
+                <w:left w:w="160" w:type="dxa"/>
+                <w:right w:w="160" w:type="dxa"/>
+              </w:tcMar>
+            </w:tcPr>
+            <w:p>
+              <w:r>
+                <w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="21"/></w:rPr>
+                <w:t xml:space="preserve">${escapeXml(cell)}</w:t>
+              </w:r>
+            </w:p>
+          </w:tc>`;
+            }
+            docXmlBody += `
+        </w:tr>`;
+          }
+
+          docXmlBody += `
+      </w:tbl>`;
+        } else {
+          // Paragraph or Heading
+          const alignXml = b.align && b.align !== 'left' ? `<w:jc w:val="${b.align}"/>` : '';
+          const styleXml = b.style && b.style !== 'Normal' ? `<w:pStyle w:val="${b.style}"/>` : (b.type === 'list' ? '<w:pStyle w:val="ListParagraph"/>' : '');
+          const indentXml = b.type === 'list' ? '<w:ind w:left="720"/>' : '';
+
+          docXmlBody += `
       <w:p>
-        <w:r><w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r>
+        <w:pPr>${styleXml}${alignXml}${indentXml}</w:pPr>`;
+
+          if (b.runs && b.runs.length > 0) {
+            for (const run of b.runs) {
+              const boldTag = run.isBold ? '<w:b/>' : '';
+              const italicTag = run.isItalic ? '<w:i/>' : '';
+              const halfPtSize = Math.round(run.fontSize * 2);
+              const sizeTag = `<w:sz w:val="${halfPtSize}"/>`;
+
+              docXmlBody += `
+        <w:r>
+          <w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/>${boldTag}${italicTag}${sizeTag}</w:rPr>
+          <w:t xml:space="preserve">${escapeXml(run.str)}</w:t>
+        </w:r>`;
+            }
+          } else {
+            docXmlBody += `
+        <w:r>
+          <w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/></w:rPr>
+          <w:t xml:space="preserve">${escapeXml(b.text)}</w:t>
+        </w:r>`;
+          }
+
+          docXmlBody += `
       </w:p>`;
+        }
       }
 
-      if (pIdx < pages.length - 1) {
+      if (pIdx < layout.pages.length - 1) {
         docXmlBody += `
       <w:p>
         <w:r><w:br w:type="page"/></w:r>
@@ -7932,11 +8215,78 @@ const PDFConvertEngine = (function() {
   </w:body>
 </w:document>`;
 
+    const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:docDefaults>
+    <w:rPrDefault>
+      <w:rPr>
+        <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/>
+        <w:sz w:val="22"/>
+        <w:szCs w:val="22"/>
+        <w:color w:val="0F172A"/>
+      </w:rPr>
+    </w:rPrDefault>
+    <w:pPrDefault>
+      <w:pPr>
+        <w:spacing w:after="160" w:line="260" w:lineRule="auto"/>
+      </w:pPr>
+    </w:pPrDefault>
+  </w:docDefaults>
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal">
+    <w:name w:val="Normal"/>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="Heading1">
+    <w:name w:val="heading 1"/>
+    <w:basedOn w:val="Normal"/>
+    <w:pPr>
+      <w:spacing w:before="240" w:after="120"/>
+    </w:pPr>
+    <w:rPr>
+      <w:b/>
+      <w:color w:val="1E40AF"/>
+      <w:sz w:val="32"/>
+    </w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="Heading2">
+    <w:name w:val="heading 2"/>
+    <w:basedOn w:val="Normal"/>
+    <w:pPr>
+      <w:spacing w:before="200" w:after="100"/>
+    </w:pPr>
+    <w:rPr>
+      <w:b/>
+      <w:color w:val="334155"/>
+      <w:sz w:val="26"/>
+    </w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="Heading3">
+    <w:name w:val="heading 3"/>
+    <w:basedOn w:val="Normal"/>
+    <w:pPr>
+      <w:spacing w:before="160" w:after="80"/>
+    </w:pPr>
+    <w:rPr>
+      <w:b/>
+      <w:color w:val="475569"/>
+      <w:sz w:val="23"/>
+    </w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="ListParagraph">
+    <w:name w:val="List Paragraph"/>
+    <w:basedOn w:val="Normal"/>
+    <w:pPr>
+      <w:ind w:left="720"/>
+      <w:spacing w:after="80"/>
+    </w:pPr>
+  </w:style>
+</w:styles>`;
+
     const contentTypesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
 </Types>`;
 
     const rootRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -7946,12 +8296,14 @@ const PDFConvertEngine = (function() {
 
     const wordRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>`;
 
     const zipEntries = [
       { name: '[Content_Types].xml', data: new TextEncoder().encode(contentTypesXml) },
       { name: '_rels/.rels', data: new TextEncoder().encode(rootRelsXml) },
       { name: 'word/_rels/document.xml.rels', data: new TextEncoder().encode(wordRelsXml) },
+      { name: 'word/styles.xml', data: new TextEncoder().encode(stylesXml) },
       { name: 'word/document.xml', data: new TextEncoder().encode(documentXml) }
     ];
 
@@ -7961,28 +8313,25 @@ const PDFConvertEngine = (function() {
 
   // 6. PDF to Excel (Structured CSV)
   async function exportExcel(pdfDoc, baseName) {
-    const pages = await extractPages(pdfDoc);
+    const layout = await analyzeLayout(pdfDoc);
     const rows = [];
 
-    for (const p of pages) {
+    for (const p of layout.pages) {
       rows.push([`--- Page ${p.pageNumber} ---`]);
-      for (const line of p.lines) {
-        // Split on commas, tabs, or multiple spaces
-        let cols = [];
-        if (line.includes('\t')) {
-          cols = line.split('\t');
-        } else if (line.includes(',') && !line.includes('  ')) {
-          cols = line.split(',');
+      for (const b of p.blocks) {
+        if (b.type === 'table') {
+          for (const r of b.rows) {
+            rows.push(r);
+          }
         } else {
-          cols = line.split(/\s{2,}/);
+          rows.push([b.text]);
         }
-        rows.push(cols.map(c => c.trim()));
       }
       rows.push([]);
     }
 
     const csvLines = rows.map(r => r.map(cell => {
-      const str = cell.replace(/"/g, '""');
+      const str = String(cell || '').replace(/"/g, '""');
       return (str.includes(',') || str.includes('\n') || str.includes('"')) ? `"${str}"` : str;
     }).join(','));
 
@@ -7994,22 +8343,35 @@ const PDFConvertEngine = (function() {
 
   // 7. PDF to PPT (HTML Slide Deck)
   async function exportPpt(pdfDoc, baseName) {
-    const pages = await extractPages(pdfDoc);
+    const layout = await analyzeLayout(pdfDoc);
 
-    const slidesHtml = pages.map((p, idx) => `
+    const slidesHtml = layout.pages.map((p, idx) => {
+      const slideItems = p.blocks.map(b => {
+        if (b.style === 'Heading1' || b.style === 'Heading2') {
+          return `<div class="slide-title-item">${escapeXml(b.text)}</div>`;
+        } else if (b.type === 'table') {
+          const rows = b.rows.map(r => `<tr>${r.map(c => `<td>${escapeXml(c)}</td>`).join('')}</tr>`).join('');
+          return `<table class="slide-table">${rows}</table>`;
+        } else {
+          return `<div class="slide-bullet"><span class="bullet-dot"></span><span>${escapeXml(b.text)}</span></div>`;
+        }
+      }).join('\n          ');
+
+      return `
       <div class="slide" id="slide-${idx + 1}">
         <div class="slide-header">
           <span class="slide-title">Slide ${p.pageNumber}</span>
           <span class="slide-badge">${escapeXml(baseName)}</span>
         </div>
         <div class="slide-body">
-          ${p.lines.map(line => `<div class="slide-bullet"><span class="bullet-dot"></span><span>${escapeXml(line)}</span></div>`).join('\n          ')}
+          ${slideItems}
         </div>
         <div class="slide-footer">
           <span>NyxSlate Slide Export</span>
-          <span>${idx + 1} / ${pages.length}</span>
+          <span>${idx + 1} / ${layout.pages.length}</span>
         </div>
-      </div>`).join('\n');
+      </div>`;
+    }).join('\n');
 
     const pptDeck = `<!DOCTYPE html>
 <html lang="en">
@@ -8063,14 +8425,20 @@ const PDFConvertEngine = (function() {
       display: flex;
       flex-direction: column;
       gap: 12px;
-      padding: 24px 0;
+      padding: 20px 0;
       overflow-y: auto;
+    }
+    .slide-title-item {
+      font-size: 18px;
+      font-weight: 700;
+      color: #38bdf8;
+      margin-bottom: 6px;
     }
     .slide-bullet {
       display: flex;
       align-items: flex-start;
       gap: 12px;
-      font-size: 15px;
+      font-size: 14px;
       line-height: 1.5;
       color: #e2e8f0;
     }
@@ -8079,8 +8447,18 @@ const PDFConvertEngine = (function() {
       height: 6px;
       border-radius: 50%;
       background: #38bdf8;
-      margin-top: 8px;
+      margin-top: 7px;
       flex-shrink: 0;
+    }
+    .slide-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0;
+      font-size: 12px;
+    }
+    .slide-table td {
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 6px 10px;
     }
     .slide-footer {
       display: flex;
