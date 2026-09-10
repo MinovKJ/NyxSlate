@@ -51,7 +51,7 @@ function getDefaultInstallPath() {
 }
 
 function checkExistingInstallation() {
-  const installerVersion = '1.0.0';
+  const installerVersion = '1.1.0';
   const defaultPath = getDefaultInstallPath();
 
   // 1. Check Windows Registry

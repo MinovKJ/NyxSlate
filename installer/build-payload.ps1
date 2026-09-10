@@ -82,7 +82,7 @@ foreach ($file in $filesToCopy) {
 
             if ((Test-Path $electronExe) -and (Test-Path $iconFile) -and (Test-Path $rceditExe)) {
                 Copy-Item $electronExe $nyxExe -Force
-                & $rceditExe $nyxExe --set-icon $iconFile --set-version-string ProductName "NyxSlate" --set-version-string FileDescription "NyxSlate" --set-version-string CompanyName "NyxSlate" --set-version-string LegalCopyright "Copyright (C) 2026 NyxSlate" --set-file-version 1.0.0 --set-product-version 1.0.0
+                & $rceditExe $nyxExe --set-icon $iconFile --set-version-string ProductName "NyxSlate" --set-version-string FileDescription "NyxSlate" --set-version-string CompanyName "NyxSlate" --set-version-string LegalCopyright "Copyright (C) 2026 NyxSlate" --set-file-version 1.1.0 --set-product-version 1.1.0
                 Write-Host "  + Created NyxSlate.exe with custom embedded icon" -ForegroundColor Green
             }
         }

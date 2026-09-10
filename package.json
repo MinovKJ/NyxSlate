@@ -1,6 +1,6 @@
 {
   "name": "nyxslate",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "NyxSlate — Premium Dark-Themed PDF Reader for Windows",
   "main": "main.js",
   "scripts": {
